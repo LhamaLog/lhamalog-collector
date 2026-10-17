@@ -36,3 +36,7 @@ Antes de adicionar qualquer biblioteca, ver Drive da equipe > Arquitetura > Depe
 Dependências a adicionar manualmente (fora do Initializr): io.opentelemetry.proto:opentelemetry-proto, io.grpc (grpc-netty-shaded, grpc-protobuf, grpc-services), com.github.ben-manes.caffeine:caffeine.
 
 Sem GitHub Actions: rode `make verify` localmente antes de cada push.
+
+## Padrão de commit
+
+Mensagens no formato `CHAVE-JIRA: descricao` (ex.: `LLT-82: inicializacao do modulo: Collector`), conforme a ADR_148. Detalhes em [CONTRIBUTING.md](CONTRIBUTING.md).
