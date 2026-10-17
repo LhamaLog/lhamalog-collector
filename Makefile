@@ -1,6 +1,8 @@
-MVNW := ./mvnw
-
-.PHONY: run build test verify
+ifeq ($(OS),Windows_NT)
+	MVNW := mvnw.cmd
+else
+	MVNW := ./mvnw
+endif
 
 run:
 	$(MVNW) spring-boot:run
