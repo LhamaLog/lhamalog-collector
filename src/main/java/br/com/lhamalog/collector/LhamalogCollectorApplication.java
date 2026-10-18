@@ -8,8 +8,6 @@ public class LhamalogCollectorApplication {
 
 	public static void main(String[] args) {
 		SpringApplication.run(LhamalogCollectorApplication.class, args);
-
-		System.out.println("Lhamalog Collector Application started");
 	}
 
 }

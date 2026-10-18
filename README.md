@@ -99,40 +99,131 @@ macOS (opcional): `xcode-select --install`.
 
 ```powershell
 .\mvnw.cmd spring-boot:run
+.\mvnw.cmd spring-boot:run "-Dspring-boot.run.profiles=local"
 .\mvnw.cmd clean package
 .\mvnw.cmd test
 .\mvnw.cmd clean verify
+docker compose -f infra/local/compose.yaml up -d
+docker compose -f infra/local/compose.yaml down
 ```
+
+> No PowerShell, argumentos `-D...` com ponto precisam de aspas (`"-Dspring-boot.run.profiles=local"`); sem aspas o PowerShell quebra o argumento no ponto.
 
 ## Comandos
 
-| Ação | Maven | Makefile |
+| Ação | Sem make | Makefile |
 |---|---|---|
-| Rodar | `./mvnw spring-boot:run` | `make run` |
+| Rodar (perfil padrão: `local`) | `./mvnw spring-boot:run` | `make run` |
+| Rodar com o perfil local | `./mvnw spring-boot:run -Dspring-boot.run.profiles=local` | `make run-local` |
 | Buildar | `./mvnw clean package` | `make build` |
 | Testar | `./mvnw test` | `make test` |
 | Verificação completa | `./mvnw clean verify` | `make verify` |
+| Subir o ambiente local | `docker compose -f infra/local/compose.yaml up -d` | `make infra-up` |
+| Parar o ambiente local | `docker compose -f infra/local/compose.yaml down` | `make infra-down` |
+| Status dos containers | `docker compose -f infra/local/compose.yaml ps` | `make infra-ps` |
+| Logs dos containers | `docker compose -f infra/local/compose.yaml logs -f` | `make infra-logs` |
+| Validar o compose | `docker compose -f infra/local/compose.yaml config -q` | `make infra-config` |
+
+No Windows, troque `./mvnw` por `.\mvnw.cmd` (o Makefile já faz isso sozinho).
 
 Executar o jar gerado:
 
 ```bash
-java -jar target/lhamalog-collector-0.0.1-SNAPSHOT.jar
+java -jar target/lhamalog-collector-0.0.1-SNAPSHOT.jar                              # perfil local (padrão)
+java -jar target/lhamalog-collector-0.0.1-SNAPSHOT.jar --spring.profiles.active=prod # produção (exige as variáveis abaixo)
 ```
-
-Perfil local: `./mvnw spring-boot:run -Dspring-boot.run.profiles=local`.
 
 ## Log de inicialização
 
 Ao subir, o serviço registra em INFO uma linha padrão (ADR_149), emitida pela classe `config.StartupLogger` no evento `ApplicationReadyEvent`:
 
 ```
-[LhamaLog] lhamalog-collector iniciado | versao=0.0.1-SNAPSHOT | porta=8080 | perfis=default | java=25
+[LhamaLog] lhamalog-collector iniciado | versao=0.0.1-SNAPSHOT | porta=8080 | perfis=local | java=25
 ```
 
-O nome vem de `spring.application.name`, a porta de `local.server.port`, a versão do `build-info` gerado pelo `spring-boot-maven-plugin` (ou `dev` se ausente) e os perfis ativos (ou `default`).
+O nome vem de `spring.application.name`, a porta de `local.server.port`, a versão do `build-info` gerado pelo `spring-boot-maven-plugin` (ou `dev` se ausente) e os perfis ativos; sem perfil ativo explícito, mostra o perfil padrão (`spring.profiles.default`, hoje `local`).
 
-## Infra local
-MongoDB, Redis e Elasticsearch locais pelo docker-compose da equipe (o mesmo do lhamalog-finder: `docker compose up -d` / `make infra-up`). Os testes usam Testcontainers e sobem os containers sozinhos.
+## Perfis de execução (ADR_151)
+
+| Perfil | Quando usar | De onde vêm as configurações |
+|---|---|---|
+| `local` (**padrão**) | Na sua máquina, contra os containers de `infra/local/` | `application-local.properties`, com valores de desenvolvimento (sobrescrevíveis por variável de ambiente) |
+| `prod` | Servidor/produção | `application-prod.properties`, que só lê variáveis de ambiente (nenhum host ou segredo no repositório) |
+
+- `application.properties` guarda só a base comum: nome da aplicação, porta (`SERVER_PORT`, padrão 8080), actuator e o liga/desliga do OTLP.
+- **Perfil padrão:** `spring.profiles.default=local`. Rodar sem informar perfil (`make run`, `.\mvnw.cmd spring-boot:run`, `java -jar ...`) usa o `local`, que não tem segredos reais. Produção sempre ativa `prod` de forma explícita (`SPRING_PROFILES_ACTIVE=prod`) e, se faltar uma variável obrigatória, o serviço **não sobe** (ex.: `Could not resolve placeholder 'MONGODB_URI'`), em vez de subir apontando para `localhost`.
+- Escolher o perfil: `make run-local`, `.\mvnw.cmd spring-boot:run "-Dspring-boot.run.profiles=local"`, `$env:SPRING_PROFILES_ACTIVE="prod"` (PowerShell) ou `--spring.profiles.active=prod` no `java -jar`.
+
+**Desligar a exportação OTLP** (rodar sem o OpenTelemetry Collector, sem erros de conexão na porta 4318):
+
+```powershell
+$env:OTLP_ENABLED="false"; make run-local
+# sem make:
+$env:OTLP_ENABLED="false"; .\mvnw.cmd spring-boot:run "-Dspring-boot.run.profiles=local"
+# para voltar a exportar:
+Remove-Item Env:OTLP_ENABLED
+```
+
+No Linux/macOS: `OTLP_ENABLED=false make run-local`.
+
+**Variáveis do perfil `prod`:**
+
+| Variável | Obrigatória | Exemplo / padrão |
+|---|---|---|
+| `SPRING_PROFILES_ACTIVE` | sim | `prod` |
+| `MONGODB_URI` | sim | `mongodb://usuario:senha@host:27017/lhamalog_collector?authSource=lhamalog_collector` |
+| `REDIS_HOST` | sim | host do Redis |
+| `REDIS_PORT` | não | `6379` |
+| `REDIS_USERNAME` / `REDIS_PASSWORD` | não | vazio |
+| `REDIS_SSL_ENABLED` | não | `false` |
+| `ELASTICSEARCH_URIS` | sim | `https://host:9200` |
+| `ELASTICSEARCH_USERNAME` / `ELASTICSEARCH_PASSWORD` | não | vazio |
+| `OTLP_METRICS_URL` | sim | `http://otel-collector:4318/v1/metrics` |
+| `OTLP_TRACES_URL` | sim | `http://otel-collector:4318/v1/traces` |
+| `OTLP_ENABLED` | não | `true` |
+| `TRACING_SAMPLING_PROBABILITY` | não | `0.1` |
+| `SERVER_PORT` | não | `8080` |
+
+`OTLP_METRICS_URL` e `OTLP_TRACES_URL` são exigidas mesmo com `OTLP_ENABLED=false`.
+
+## Ambiente local (infra/local)
+
+Tudo que o ambiente local usa fica em **uma pasta só**, `infra/local/`:
+
+```
+infra/local/
+├── compose.yaml                    # MongoDB, Redis, Elasticsearch e OpenTelemetry Collector
+├── .env.example                    # portas e credenciais de desenvolvimento (copie para .env, opcional)
+├── mongo-init/
+│   └── 01-create-app-user.js       # cria o banco lhamalog_collector e o usuário da aplicação
+└── otel-collector/
+    └── config.yaml                 # recebe OTLP (4317 gRPC / 4318 HTTP) e imprime no log
+```
+
+| Serviço | Imagem (versão fixa) | Porta |
+|---|---|---|
+| MongoDB | `mongo:8.0.34` | 27017 |
+| Redis | `redis:8.2.10` | 6379 |
+| Elasticsearch | `docker.elastic.co/elasticsearch/elasticsearch:9.4.5` | 9200 |
+| OpenTelemetry Collector | `otel/opentelemetry-collector-contrib:0.163.1` | 4317, 4318, 13133 |
+
+Subir, conferir e rodar (PowerShell, na raiz do repositório; precisa do Docker Desktop aberto):
+
+```powershell
+Copy-Item infra\local\.env.example infra\local\.env   # opcional: só se quiser mudar portas/senhas
+make infra-up                                           # ou: docker compose -f infra/local/compose.yaml up -d
+make infra-ps                                           # aguarde os serviços ficarem "healthy"
+make run-local                                          # ou: .\mvnw.cmd spring-boot:run "-Dspring-boot.run.profiles=local"
+```
+
+- Saúde da aplicação: `http://localhost:8080/actuator/health` (no perfil local mostra o estado de Mongo, Redis e Elasticsearch).
+- Métricas e traces enviados ao collector aparecem em `make infra-logs` (ou `docker compose -f infra/local/compose.yaml logs -f otel-collector`).
+- Parar: `make infra-down` (mantém os dados). Para apagar os dados locais e rodar de novo o script do Mongo: `docker compose -f infra/local/compose.yaml down -v`.
+- Se mudar portas ou credenciais no `.env`, ajuste também a aplicação por variável de ambiente (ex.: `$env:MONGODB_URI="..."`).
+- O `infra/local/.env` está no `.gitignore`; só o `.env.example` vai para o repositório.
+- As portas são as mesmas do docker-compose do lhamalog-finder: não suba os dois ao mesmo tempo (ou mude as portas no `.env`).
+
+Os testes (`make test`) usam Testcontainers e sobem os próprios containers; não dependem de `infra/local/`.
 
 ## Dependências
 Antes de adicionar qualquer biblioteca, ver Drive da equipe > Arquitetura > Dependências específicas dos módulos (evita bibliotecas com a mesma função).

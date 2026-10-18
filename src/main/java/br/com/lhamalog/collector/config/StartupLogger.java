@@ -1,7 +1,5 @@
 package br.com.lhamalog.collector.config;
 
-import java.util.Arrays;
-
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
@@ -34,8 +32,12 @@ public class StartupLogger {
         BuildProperties build = buildProperties.getIfAvailable();
         String version = build != null ? build.getVersion() : "dev";
         String port = environment.getProperty("local.server.port", "-");
+        // Sem perfil ativo explicito, o Spring usa spring.profiles.default (local, ADR_151).
         String[] active = environment.getActiveProfiles();
-        String profiles = active.length == 0 ? "default" : String.join(",", Arrays.asList(active));
+        if (active.length == 0) {
+            active = environment.getDefaultProfiles();
+        }
+        String profiles = String.join(",", active);
         String java = String.valueOf(Runtime.version().feature());
         log.info("[LhamaLog] {} iniciado | versao={} | porta={} | perfis={} | java={}", name, version, port, profiles, java);
     }

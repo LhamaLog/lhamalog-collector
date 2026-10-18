@@ -1,0 +1,80 @@
+# Ambiente local do lhamalog-collector (somente desenvolvimento) - ADR_151.
+# Uso (na raiz do repositorio): make infra-up | make infra-down
+#   ou: docker compose -f infra/local/compose.yaml up -d
+# Variaveis opcionais: copie .env.example para .env nesta mesma pasta e ajuste.
+name: lhamalog-collector-local
+
+services:
+  mongo:
+    image: mongo:8.0.34
+    container_name: lhamalog-collector-mongo
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:-root}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:-root}
+      MONGO_INITDB_DATABASE: ${MONGO_APP_DATABASE:-lhamalog_collector}
+      MONGO_APP_DATABASE: ${MONGO_APP_DATABASE:-lhamalog_collector}
+      MONGO_APP_USERNAME: ${MONGO_APP_USERNAME:-lhamalog}
+      MONGO_APP_PASSWORD: ${MONGO_APP_PASSWORD:-lhamalog}
+    ports:
+      - "${MONGO_PORT:-27017}:27017"
+    volumes:
+      - mongo-data:/data/db
+      - ./mongo-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  redis:
+    image: redis:8.2.10
+    container_name: lhamalog-collector-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:9.4.5
+    container_name: lhamalog-collector-elasticsearch
+    restart: unless-stopped
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: ${ES_JAVA_OPTS:--Xms512m -Xmx512m}
+    ports:
+      - "${ELASTICSEARCH_PORT:-9200}:9200"
+    volumes:
+      - es-data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:9200/_cluster/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 40s
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.163.1
+    container_name: lhamalog-collector-otel
+    restart: unless-stopped
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    volumes:
+      - ./otel-collector/config.yaml:/etc/otelcol-contrib/config.yaml:ro
+    ports:
+      - "${OTEL_GRPC_PORT:-4317}:4317"   # OTLP gRPC
+      - "${OTEL_HTTP_PORT:-4318}:4318"   # OTLP HTTP (usado pelo perfil local)
+      - "${OTEL_HEALTH_PORT:-13133}:13133" # health_check
+
+volumes:
+  mongo-data:
+  redis-data:
+  es-data:
