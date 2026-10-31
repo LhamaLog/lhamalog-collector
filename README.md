@@ -183,9 +183,6 @@ No Linux/macOS: `OTLP_ENABLED=false make run-local`.
 | `OTLP_ENABLED` | não | `true` |
 | `TRACING_SAMPLING_PROBABILITY` | não | `0.1` |
 | `SERVER_PORT` | não | `8080` |
-| `OTLP_RECEIVER_HTTP_PORT` / `OTLP_RECEIVER_GRPC_PORT` | não | `4318` / `4317` |
-| `OTLP_RECEIVER_MAX_REQUEST_SIZE` | não | `4MB` |
-| `OTLP_VALID_TOKENS` / `OTLP_REVOKED_TOKENS` | não (provisório) | vazio — sem tokens, todo envio OTLP recebe 401 |
 
 `OTLP_METRICS_URL` e `OTLP_TRACES_URL` são exigidas mesmo com `OTLP_ENABLED=false`.
 
@@ -227,53 +224,6 @@ make run-local                                          # ou: .\mvnw.cmd spring-
 - As portas são as mesmas do docker-compose do lhamalog-finder: não suba os dois ao mesmo tempo (ou mude as portas no `.env`).
 
 Os testes (`make test`) usam Testcontainers e sobem os próprios containers; não dependem de `infra/local/`.
-
-## Recepção OTLP (LLT-181)
-
-O collector recebe **logs e traces** pelo protocolo OTLP, autenticados pelo token de API do produto:
-
-| Transporte | Porta (prod / padrão) | Porta no perfil `local` | Endpoints |
-|---|---|---|---|
-| OTLP/HTTP | 4318 | **14318** | `POST /v1/logs`, `POST /v1/traces` (`application/x-protobuf` ou `application/json`, gzip opcional) |
-| OTLP/gRPC | 4317 | **14317** | `LogsService/Export`, `TraceService/Export` |
-
-- **Por que 14317/14318 no local:** as portas 4317/4318 do host já são do OpenTelemetry Collector de `infra/local` (que recebe as métricas/traces do próprio serviço). Para não brigar com ele, no perfil `local` o receptor do app sobe em 14317/14318. Em produção (e em qualquer perfil sem override) valem as portas da especificação, 4317/4318. Ajuste com `OTLP_RECEIVER_HTTP_PORT` / `OTLP_RECEIVER_GRPC_PORT`.
-- Os receptores rodam em servidores próprios (HTTP do JDK e gRPC/Netty), separados do Tomcat da porta 8080; por isso **não passam pelo Spring Security**. A autenticação é o header `Authorization: Bearer <token>` (no gRPC, metadata `authorization`).
-- Respostas seguem a especificação OTLP: `200` com `ExportLogsServiceResponse`/`ExportTraceServiceResponse` (JSON quando a entrada é JSON, protobuf quando é protobuf); registros inválidos (ex.: `traceId`/`spanId` com tamanho errado, `severityNumber` fora de 0..24, span sem `name`) são descartados e informados em `partialSuccess` (`rejectedLogRecords`/`rejectedSpans` + `errorMessage`), e o restante do lote é aceito.
-- Erros: `400` corpo inválido, `401` token inválido/revogado/ausente (gRPC `UNAUTHENTICATED`; o lote não é processado), `404` caminho, `405` método, `413` corpo acima de `OTLP_RECEIVER_MAX_REQUEST_SIZE` (padrão `4MB`), `415` Content-Type/Content-Encoding, `503` + `Retry-After: 120` quando há back-pressure (gRPC `UNAVAILABLE` + `RetryInfo` de 2 minutos). O corpo de erro é um `google.rpc.Status`.
-- **Tokens (provisório):** até a validação no MongoDB (AES-256-GCM + índice SHA-256), os tokens vêm de propriedades: `lhamalog.otlp.auth.valid-tokens` / `lhamalog.otlp.auth.revoked-tokens` (variáveis `OTLP_VALID_TOKENS` / `OTLP_REVOKED_TOKENS`, listas separadas por vírgula; revogado tem precedência). No perfil `local`: válido `dev-token-local`, revogado `dev-token-revogado`.
-- O lote aceito vai para `LogsBatchSink`/`TracesBatchSink`; hoje a implementação (`LoggingBatchSink`) só loga em DEBUG e contabiliza. Associação ao produto (LLT-182), limites por plano (LLT-183), fila (LLT-184) e persistência (LLT-185) entram nesses pontos.
-
-Teste manual (com `make run-local` rodando). PowerShell — use `curl.exe` (o `curl` do PowerShell é alias de `Invoke-WebRequest`):
-
-```powershell
-$body = @'
-{"resourceLogs":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"demo"}}]},
- "scopeLogs":[{"scope":{"name":"manual"},"logRecords":[
-  {"timeUnixNano":"1730000000000000000","severityNumber":9,"severityText":"INFO",
-   "body":{"stringValue":"ola LhamaLog"},
-   "traceId":"5b8efff798038103d269b633813fc60c","spanId":"eee19b7ec3c1b174"}]}]}]}
-'@
-Set-Content -Path logs.json -Value $body -Encoding ascii
-curl.exe -i -X POST http://localhost:14318/v1/logs -H "Authorization: Bearer dev-token-local" -H "Content-Type: application/json" --data-binary "@logs.json"
-# esperado: HTTP/1.1 200 e corpo {}
-curl.exe -i -X POST http://localhost:14318/v1/logs -H "Authorization: Bearer dev-token-revogado" -H "Content-Type: application/json" --data-binary "@logs.json"
-# esperado: HTTP/1.1 401 e {"code":16,"message":"token revogado"}
-```
-
-Linux/macOS: o mesmo `curl`, com `-d '<json>'`. Para ver `partialSuccess`, mande um `traceId` com tamanho errado (ex.: `"abcd"`). Traces: `POST /v1/traces` com `{"resourceSpans":[{"scopeSpans":[{"spans":[{"traceId":"5b8efff798038103d269b633813fc60c","spanId":"eee19b7ec3c1b174","name":"GET /","kind":2,"startTimeUnixNano":"1","endTimeUnixNano":"2"}]}]}]}`.
-
-gRPC (com [grpcurl](https://github.com/fullstorydev/grpcurl); o servidor não tem reflection, então aponte para os `.proto` do [opentelemetry-proto](https://github.com/open-telemetry/opentelemetry-proto)):
-
-```bash
-grpcurl -plaintext -import-path opentelemetry-proto -proto opentelemetry/proto/collector/logs/v1/logs_service.proto \
-  -H "authorization: Bearer dev-token-local" -d '{"resourceLogs":[]}' \
-  localhost:14317 opentelemetry.proto.collector.logs.v1.LogsService/Export
-```
-
-Ou aponte um SDK/Collector OpenTelemetry para `http://localhost:14318` (HTTP) ou `localhost:14317` (gRPC, insecure) com o header `Authorization=Bearer dev-token-local`.
-
-Testes automatizados: `OtlpReceiverTest` (HTTP protobuf, HTTP JSON, gRPC, `partialSuccess`, token inválido/revogado, back-pressure) sobe os receptores em portas aleatórias e **não precisa de Docker**: `.\mvnw.cmd test "-Dtest=OtlpReceiverTest"`.
 
 ## Dependências
 Antes de adicionar qualquer biblioteca, ver Drive da equipe > Arquitetura > Dependências específicas dos módulos (evita bibliotecas com a mesma função).

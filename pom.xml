@@ -28,10 +28,6 @@
 	</scm>
 	<properties>
 		<java.version>25</java.version>
-		<!-- LLT-181: recepcao OTLP (logs e traces) via HTTP e gRPC -->
-		<opentelemetry-proto.version>1.11.1-alpha</opentelemetry-proto.version>
-		<grpc.version>1.85.1</grpc.version>
-		<protobuf.version>4.36.2</protobuf.version>
 	</properties>
 	<dependencies>
 		<dependency>
@@ -73,43 +69,6 @@
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-webmvc</artifactId>
-		</dependency>
-
-		<!-- LLT-181: OTLP (mensagens e stubs gRPC oficiais) + servidor gRPC -->
-		<dependency>
-			<groupId>io.opentelemetry.proto</groupId>
-			<artifactId>opentelemetry-proto</artifactId>
-			<version>${opentelemetry-proto.version}</version>
-		</dependency>
-		<dependency>
-			<groupId>com.google.protobuf</groupId>
-			<artifactId>protobuf-java</artifactId>
-			<version>${protobuf.version}</version>
-		</dependency>
-		<dependency>
-			<groupId>com.google.protobuf</groupId>
-			<artifactId>protobuf-java-util</artifactId>
-			<version>${protobuf.version}</version>
-		</dependency>
-		<dependency>
-			<!-- ajuste de traceId/spanId hex do OTLP/JSON; versao gerenciada pelo Spring Boot -->
-			<groupId>com.google.code.gson</groupId>
-			<artifactId>gson</artifactId>
-		</dependency>
-		<dependency>
-			<groupId>io.grpc</groupId>
-			<artifactId>grpc-netty-shaded</artifactId>
-			<version>${grpc.version}</version>
-		</dependency>
-		<dependency>
-			<groupId>io.grpc</groupId>
-			<artifactId>grpc-protobuf</artifactId>
-			<version>${grpc.version}</version>
-		</dependency>
-		<dependency>
-			<groupId>io.grpc</groupId>
-			<artifactId>grpc-stub</artifactId>
-			<version>${grpc.version}</version>
 		</dependency>
 
 		<dependency>
