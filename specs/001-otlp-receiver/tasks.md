@@ -138,7 +138,7 @@ Código em `src/main/java/br/com/lhamalog/collector/`. Testes em `src/test/java/
 
 - [x] T036 [P] Atualizar `README.md` para descrever logs e traces no OpenObserve (streams `logs` e `traces`, organização `lhamalog`, ADR_168), tokens na coleção `product_tokens` ligada a `products`, explicar que o Redis segue como fila da Varredura e não é destino do collector, tirar Elasticsearch da infra, do health e das variáveis, e documentar as portas 4328/4327 no local e 4318/4317 em produção, sem valor de token ou senha
 - [x] T037 [P] Conferir que `src/main/resources/application-prod.properties` não tem senha, URI com credencial ou token com valor default
-- [ ] T038 Executar o roteiro de `specs/001-otlp-receiver/quickstart.md` com `.\mvnw.cmd test` e `.\mvnw.cmd clean verify` na máquina local
+- [x] T038 Executar o roteiro de `specs/001-otlp-receiver/quickstart.md` com `.\mvnw.cmd test` e `.\mvnw.cmd clean verify` na máquina local
 
 ---
 
