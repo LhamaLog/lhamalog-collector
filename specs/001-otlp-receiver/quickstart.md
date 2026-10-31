@@ -4,8 +4,8 @@ Guia para provar a feature depois da implementação. Os cenários detalhados
 estão em [spec.md](spec.md). Códigos e caminhos estão em
 [contracts/otlp-export.md](contracts/otlp-export.md).
 
-Ainda não há receptor no código. Os comandos abaixo são o roteiro de
-validação, não um resultado já observado.
+O receptor está implementado (LLT-181). Os comandos abaixo são o roteiro de
+validação, executado ao fim da implementação (T038).
 
 ## Pré-requisitos
 
