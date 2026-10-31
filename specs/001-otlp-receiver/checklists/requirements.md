@@ -35,4 +35,4 @@
 - HTTP, gRPC, OTLP e token Bearer permanecem na spec porque são o contrato pedido pelo usuário (o que o produto envia), não a escolha de linguagem ou de armazenamento.
 - O destino fica abstrato de propósito: a spec exige confirmação de recebimento e não define onde o registro é guardado.
 - Aceite parcial de lote misto é premissa explícita em Assumptions, alinhada ao OTLP e à regra de rejeitar o registro inválido.
-- Nenhum marcador [NEEDS CLARIFICATION] foi necessário.
+- Revisão em 2026-10-31: o marcador sobre a relação productId/tenantId (ADR_121/ADR_168) foi resolvido. Cada produto pertence a um tenant; o collector grava `tenantId` e `productId` em cada registro. Nenhum [NEEDS CLARIFICATION] pendente.

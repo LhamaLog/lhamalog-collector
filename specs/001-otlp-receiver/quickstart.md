@@ -26,22 +26,22 @@ Na raiz do repositório:
 O que precisa passar:
 
 1. Lote válido de logs por HTTP e por gRPC, com token ativo, fica no stream
-   OpenObserve `logs` com o `productId` do token. O mesmo para traces no Redis
-   Stream `lhamalog:traces`.
+   OpenObserve `logs` com o `productId` do token e o `tenantId` do produto. O mesmo para traces no stream
+   OpenObserve `traces`.
 2. Nome de produto dentro do lote não troca o `productId`.
 3. Lote vazio bem formado responde sucesso e não escreve no destino.
-4. Sem token, token desconhecido, revogado ou expirado: não autorizado, e o
+4. Sem token, token desconhecido, revogado, expirado ou de produto inexistente: não autorizado, e o
    destino não recebe o lote.
 5. Corpo ilegível e lote em que todos os registros são inválidos: rejeição, sem
    escrita.
 6. Lote misto: só os válidos no destino, com contagem de rejeitados na resposta.
-7. OpenObserve parado no teste de logs, ou Redis parado no teste de traces:
-   erro de destino, sem confirmação de sucesso.
+7. OpenObserve parado no teste de logs ou no de traces: erro de destino, sem
+   confirmação de sucesso.
 8. HTTP e gRPC devolvem a mesma classe de resultado na mesma situação.
 
-Os testes sobem MongoDB, OpenObserve e Redis por Testcontainers. O token do
-teste é aleatório e só existe na memória daquele processo, já em forma de hash
-no Mongo de teste.
+Os testes sobem MongoDB, Redis e OpenObserve por Testcontainers. O Redis
+continua no projeto como fila da Varredura, mas não é destino da ingestão. O token do teste é aleatório e só existe na memória
+daquele processo, já em forma de hash em `product_tokens` no Mongo de teste.
 
 Build completo, como pede a constituição antes do merge:
 
@@ -51,15 +51,20 @@ Build completo, como pede a constituição antes do merge:
 
 ## Ensaio manual no perfil local
 
-Sobe a infra (Mongo, Redis, OpenObserve e o collector de observabilidade):
+Sobe a infra (Mongo, Redis, OpenObserve e o collector de observabilidade). O
+Redis fica no compose para a Varredura; o collector não grava nele.
+Antes, defina `OPENOBSERVE_USERNAME` e `OPENOBSERVE_PASSWORD` no `infra/local/.env`
+(não versionado):
 
 ```powershell
 docker compose -f infra/local/compose.yaml up -d
 ```
 
-Escolha um token só na sua sessão e calcule o SHA-256 em hex. Insira na coleção
-`products` do banco `lhamalog_collector` um documento com esse `tokenHash`,
-`status` `ACTIVE` e um `productId` seu. Não copie o token para o repositório.
+Escolha um token só na sua sessão e calcule o SHA-256 em hex minúsculo. No
+banco `lhamalog_collector`, insira em `products` um documento com um
+`productId` e um `tenantId` seus e, em `product_tokens`, um documento com esse `productId`,
+o `tokenHash`, `status` `ACTIVE` e `createdAt` (sem `revokedAt`). Não copie o
+token para o repositório.
 
 Suba a aplicação:
 
@@ -76,10 +81,13 @@ esperado para um lote válido é HTTP 200 e um registro novo no stream
 OpenObserve `logs` com o seu `productId`. Repita a falha sem o header: HTTP 401
 e nenhum registro novo.
 
+Para traces, envie `POST http://localhost:4328/v1/traces` do mesmo jeito. O
+esperado é HTTP 200 e um registro novo no stream OpenObserve `traces`.
+
 Para o destino indisponível, pare o OpenObserve e repita o POST válido.
 O esperado é HTTP 503.
 
 ## Fora deste ensaio
 
-Métricas, cadastro de produto pela aplicação, busca no OpenObserve e
-consumidor do stream de traces.
+Métricas, cadastro de produto pela aplicação, cadastro, rotação e
+revogação de token, busca no OpenObserve.

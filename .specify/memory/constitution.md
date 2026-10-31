@@ -1,3 +1,17 @@
+<!--
+Sync Impact Report
+- Version change: 1.0.0 -> 2.0.0 (MAJOR: princípio II removido e redefinido)
+- Modified principles:
+  - II. Autoria humana mínima de 40% -> II. IA pode implementar 100%, com revisão e domínio do desenvolvedor
+- Added sections: nenhuma
+- Removed sections: nenhuma (a regra 60/40 e as marcas [IA]/[Michel] saem do princípio II e do fluxo de merge)
+- Templates requiring updates:
+  - .specify/templates/plan-template.md: ✅ sem referência a 60/40
+  - .specify/templates/spec-template.md: ✅ sem referência a 60/40
+  - .specify/templates/tasks-template.md: ✅ sem referência a 60/40
+  - specs/001-otlp-receiver/ (plan.md, research.md seção 11, tasks.md): ✅ atualizados
+- Follow-up TODOs: nenhum
+-->
 # LhamaLog Collector Constitution
 
 ## Core Principles
@@ -11,17 +25,19 @@ entrar na branch principal.
 Rationale: o SpecKit é o contrato de escopo. Implementar antes de fechar
 specify, plan e tasks mistura entrega com requisito ainda aberto.
 
-### II. Autoria humana mínima de 40% (NON-NEGOTIABLE)
+### II. IA pode implementar 100%, com revisão e domínio do desenvolvedor (NON-NEGOTIABLE)
 
-Em cada feature, a IA MUST escrever no máximo 60% do código e o desenvolvedor
-(Michel) MUST escrever no mínimo 40%. A parcela do desenvolvedor MUST incluir
-lógica de negócio; regra de negócio entregue só pela IA não conta como pronta.
-Cada task em `tasks.md` MUST ser marcada `[IA]` ou `[Michel]` antes da
-implementação. O review MUST recusar a feature quando a marca faltar ou quando
-a lógica de negócio estiver só nas tasks `[IA]`.
+A IA MAY implementar 100% do código de uma feature, inclusive a lógica de
+negócio. Toda implementação MUST seguir o Spec Kit (princípio I): nenhuma linha
+de código entra sem spec, plan e tasks que a descrevam. O desenvolvedor MUST
+revisar cada entrega e manter o domínio do que foi implementado; a IA MUST
+explicar ao desenvolvedor o que implementou, por qual perspectiva e com quais
+decisões, e as decisões MUST ficar registradas nos artefatos do Spec Kit
+(research, plan, tasks). Tasks não levam marca de autoria.
 
-Rationale: a IA acelera o trabalho repetitivo. O desenvolvedor precisa ser
-autor da regra de negócio para conseguir mantê-la.
+Rationale: a regra 60/40 foi derrubada no alinhamento de gestores de
+2026-10-31. O controle passa a ser o Spec Kit como documentação viva e a
+revisão do desenvolvedor, que precisa entender e conseguir manter o código.
 
 ### III. Testes antes do merge (NON-NEGOTIABLE)
 
@@ -71,10 +87,9 @@ constituição e MUST ser registrada aqui antes de entrar no código.
   Exemplo: `feature/LL-12-ingestao-otlp`.
 - A mensagem de commit MUST seguir `<chave-jira>: <descricao>`.
   Exemplo: `LL-12: persiste log no Elasticsearch`.
-- O merge MUST confirmar, nesta ordem: SpecKit completo, tasks marcadas
-  `[IA]` ou `[Michel]`, autoria mínima de 40% com lógica de negócio do
-  desenvolvedor, build e testes locais verdes, branch e commit no padrão, e
-  ausência de segredos.
+- O merge MUST confirmar, nesta ordem: SpecKit completo, revisão do
+  desenvolvedor sobre o que a IA implementou, build e testes locais verdes,
+  branch e commit no padrão, e ausência de segredos.
 
 ## Governance
 
@@ -91,4 +106,4 @@ Revisão de conformidade: specify, plan, tasks e o review de merge MUST checar
 os cinco princípios, o stack e o fluxo de desenvolvimento. Violação bloqueia o
 merge até a correção ou até uma emenda explícita desta constituição.
 
-**Version**: 1.0.0 | **Ratified**: 2026-10-30 | **Last Amended**: 2026-10-30
+**Version**: 2.0.0 | **Ratified**: 2026-10-30 | **Last Amended**: 2026-10-31

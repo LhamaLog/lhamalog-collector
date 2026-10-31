@@ -40,10 +40,12 @@ O `Content-Type` da resposta repete o da requisição. 401, 400 e 413 não são
 para retry. 503 é.
 
 No aceite parcial de logs, só os logs válidos estão no stream OpenObserve
-`logs`, com `productId` do token. No de traces, só os spans válidos estão no
-Redis Stream `lhamalog:traces`.
+`logs`, com `productId` do token e `tenantId` do produto. No de traces, só os spans válidos estão no
+stream OpenObserve de traces (padrão `traces`), também com `productId` do
+token e `tenantId` do produto. Nenhum valor do lote substitui esses dois
+campos.
 
-O collector confirma o lote de logs só quando o OpenObserve responde HTTP 200,
+O collector confirma o lote de logs ou de traces só quando o OpenObserve responde HTTP 200,
 `failed` é zero e `successful` é igual à quantidade enviada. Credencial e URL
 do OpenObserve não fazem parte deste contrato público: ficam em variável de
 ambiente.

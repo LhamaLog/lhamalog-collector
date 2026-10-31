@@ -73,13 +73,19 @@ protótipo revertido (`ffa3ac5`). Descarta o compose atual.
 
 **Decision**:
 
+- Conforme a ADR_168 (aceita), o OpenObserve substitui o Elasticsearch para
+  logs e traces. O lhamalog-collector é o elo de ingestão OTLP antes do
+  OpenObserve: recebe dos produtos, autentica, valida e grava.
 - Logs aceitos vão para o OpenObserve, `POST /api/{organization}/{stream}/_json`,
-  organização `lhamalog` e stream `logs` (os dois configuráveis). Cada registro
-  aceito é um objeto JSON do array. A confirmação é HTTP 200 com `failed` igual
-  a zero e `successful` igual à quantidade enviada.
-- Traces aceitos continuam no Redis Stream `lhamalog:traces`. A confirmação é o
-  ack do `XADD` de cada span aceito.
-- O campo de produto nos dois destinos é o `productId` do token. Atributos
+  organização `lhamalog` e stream `logs` (os dois configuráveis).
+- Traces aceitos vão para o OpenObserve pelo mesmo endpoint de ingestão JSON,
+  organização `lhamalog` e stream de traces configurável (padrão `traces`).
+  O Redis Stream `lhamalog:traces` deixa de ser destino.
+- Cada registro aceito é um objeto JSON do array. A confirmação, para os dois
+  sinais, é HTTP 200 com `failed` igual a zero e `successful` igual à
+  quantidade enviada.
+- Os campos de produto e tenant nos dois streams são o `productId` do token e
+  o `tenantId` do produto. Atributos
   internos do lote não substituem esse campo.
 - Sem outbox e sem escrita dupla. Falha do destino daquele sinal responde
   indisponível. Reenvio pode duplicar (a spec admite isso).
@@ -90,49 +96,71 @@ protótipo revertido (`ffa3ac5`). Descarta o compose atual.
   Testcontainers). A implementação remove esse caminho. O compose local ganha
   o OpenObserve OSS (`public.ecr.aws/zinclabs/openobserve`, porta 5080), com a
   mesma tag no compose e no teste.
+- A ADR_121 e a ADR_168 exigem isolamento por `tenantId` nos dados do
+  OpenObserve. Cada produto pertence a um tenant; `products` guarda o
+  `tenantId`. O collector resolve o `tenantId` pelo produto do token e grava
+  `tenantId` e `productId` no primeiro nível de cada log e span. O lote não
+  substitui nenhum dos dois.
 
-**Rationale**: O time troca o armazenamento de logs do Elasticsearch para o
-OpenObserve. A spec só exige um destino que confirme o recebimento; o
-OpenObserve faz isso no JSON de ingestão (`code` 200 e a contagem `successful`
-/ `failed`). Traces não usavam Elasticsearch, então seguem no Redis. Se o
-OpenObserve aceita só parte do array, o collector responde indisponível: a
-spec não confirma sucesso enquanto faltar registro aceito.
+**Rationale**: A ADR_168 fixa o OpenObserve como armazenamento de logs e
+traces. A spec só exige um destino que confirme o recebimento; o OpenObserve
+faz isso no JSON de ingestão (`code` 200 e a contagem `successful` / `failed`).
+Usar o mesmo endpoint e a mesma regra nos dois sinais reduz o código de
+adaptador. Se o OpenObserve aceita só parte do array, o collector responde
+indisponível: a spec não confirma sucesso enquanto faltar registro aceito.
 
 **Alternatives considered**:
 
-- Manter o Elasticsearch para logs. O time decidiu encerrar esse uso.
+- Manter o Elasticsearch para logs. Contraria a ADR_168.
+- Manter traces no Redis Stream `lhamalog:traces`. Contraria a ADR_168, que
+  coloca traces no OpenObserve.
 - Reenviar o OTLP bruto ao endpoint OTLP do OpenObserve. O `productId` do token
-  precisa existir como campo do log; o JSON de ingestão carrega esse campo sem
-  depender do achatamento do OTLP.
-- Mandar traces também ao OpenObserve. Não foi pedido. O Redis continua o
-  destino de traces.
+  precisa existir como campo do registro; o JSON de ingestão carrega esse campo
+  sem depender do achatamento do OTLP.
 - Tratar `failed` maior que zero como sucesso parcial OTLP. O OpenObserve não
   diz qual registro falhou, e a spec só confirma o que o destino recebeu por
   inteiro.
 
-O stream não usa `MAXLEN` nesta feature. Quem consome o stream é que limita o
-tamanho. Cortar no collector apagaria um trace já confirmado.
-
 ## 6. Token que identifica o produto
 
-**Decision**: O collector só lê. A coleção MongoDB `products` guarda
-`productId`, `tokenHash` (SHA-256 em hex dos bytes UTF-8 do token), `status`
-(`ACTIVE` ou `REVOKED`) e `expiresAt` opcional. O token apresentado é
-hasheado e buscado. Caffeine guarda o resultado por 30 segundos, inclusive a
-ausência. Valor de token não entra em código, teste commitado, documentação
-nem log.
+**Decision**: O collector só lê. Os tokens ficam na coleção MongoDB
+`product_tokens`, relacionada a `products` por `productId` (um produto, vários
+tokens). Campos: `id`, `productId` (referência obrigatória a `products`),
+`tokenHash` (SHA-256 em hex minúsculo dos bytes UTF-8 do token, único),
+`status` (`ACTIVE` ou `REVOKED`), `createdAt` (obrigatório), `revokedAt`
+(preenchido na revogação, ausente se ativo) e `expiresAt` opcional. O token
+apresentado é hasheado e buscado em `product_tokens`. Caffeine guarda o
+resultado por 30 segundos, inclusive a ausência. Valor de token não entra em
+código, teste commitado, documentação nem log.
 
-Cadastro, rotação e tela de produto continuam fora desta feature. Teste e
-quickstart inserem o documento com um token gerado na hora.
+Token válido: `status` `ACTIVE`, sem `revokedAt`, `expiresAt` ausente ou
+futuro, e o produto relacionado existe em `products` com `tenantId`.
+
+Ciclo de vida, documentado aqui e executado fora desta feature: um token nunca
+é apagado fisicamente. Revogar só muda `status` para `REVOKED` e preenche
+`revokedAt`. A exclusão física só ocorre em cascata, quando o produto
+relacionado é apagado.
+
+Cadastro, rotação, revogação e tela de produto continuam fora desta feature.
+Teste e quickstart inserem um documento em `products` e um em `product_tokens`
+com um token gerado na hora.
 
 Se o MongoDB não responder, a resposta é indisponível (o collector não sabe se
-o token vale). Token ausente, vazio, desconhecido, revogado ou expirado é uma
-única recusa de não autorizado, sem detalhar o motivo ao remetente.
+o token vale). Token ausente, vazio, desconhecido, revogado, expirado ou de
+produto inexistente é uma única recusa de não autorizado, sem detalhar o
+motivo ao remetente.
+
+O `tenantId` exigido pela ADR_121/ADR_168 vem do documento de `products`
+relacionado ao token. A busca do token devolve `productId` e `tenantId` juntos,
+e o cache guarda os dois. Produto sem `tenantId` é cadastro inválido e o token
+é recusado como não autorizado.
 
 **Rationale**: A spec deixa o cadastro fora e exige token válido ligado a um
 produto. O protótipo lia a lista de tokens em propriedade, com o comentário de
 que isso era provisório até o MongoDB. O MongoDB já é dependência. Hash evita
-guardar o segredo em claro. O TTL curto faz revogação aparecer sem transformar
+guardar o segredo em claro. Separar `product_tokens` de `products` permite
+vários tokens por produto (rotação sem parada) e histórico de revogação, já
+que o token revogado não é apagado. O TTL curto faz revogação aparecer sem transformar
 o cache em fonte permanente.
 
 **Alternatives considered**:
@@ -140,6 +168,8 @@ o cache em fonte permanente.
 - Lista de tokens em `application-*.properties`. Coloca segredo em arquivo e
   não identifica um documento de produto.
 - JWT no resource server. O produto não emite JWT neste contrato.
+- `tokenHash` dentro do documento de `products`. Só cabe um token por produto
+  e a revogação apaga o histórico.
 - Cache só de acertos. Um token recém-revogado continuaria válido até o
   processo reiniciar.
 
@@ -194,8 +224,8 @@ Span inválido quando:
 - `name` vazio
 - `end_time_unix_nano` diferente de zero e anterior a `start_time_unix_nano`
 
-Um log sem body continua válido. Essas regras são lógica de negócio e ficam
-com o desenvolvedor (regra 60/40).
+Um log sem body continua válido. Essas regras são lógica de negócio, ficam no
+pacote `domain` e são revisadas pelo desenvolvedor (constituição 2.0.0, princípio II).
 
 **Rationale**: É o mínimo que distingue lixo estrutural de telemetria aceitável,
 sem exigir campos que o OTLP trata como opcionais no log. O protótipo revertido
@@ -229,19 +259,19 @@ abaixo da recomendação do protocolo.
 **Alternatives considered**: 4 MiB fixos. Protege mais a memória e rejeita
 lotes que um cliente OTLP padrão ainda enviaria.
 
-## 11. Autoria 60/40
+## 11. Autoria e revisão
 
-**Decision**: O desenvolvedor escreve a lógica de negócio: validade do
-registro, atribuição ao produto do token, lote vazio, aceite parcial, rejeição
-total e a escolha da classe de erro quando o destino falha. A IA pode escrever
-o arranque dos servidores, o enquadramento protobuf/gzip e os adaptadores de
-OpenObserve, Redis e MongoDB, desde que a parcela do desenvolvedor cubra
-essas regras e fique em pelo menos 40% do código da feature. As tasks marcarão
-`[Michel]` e `[IA]`.
+**Decision**: A IA implementa 100% da feature, inclusive a lógica de negócio
+(validade do registro, atribuição ao produto do token, lote vazio, aceite
+parcial, rejeição total, validade do token e classe de erro com o mapa para
+HTTP e gRPC), seguindo o Spec Kit: spec, plan e tasks antes do código, testes
+antes da implementação quando a task pede. A lógica de negócio fica isolada no
+pacote `ingestion/otlp/domain` e nos serviços `application`, para que o
+desenvolvedor revise e mantenha o domínio sem ler os adaptadores. As tasks não
+levam marca de autoria.
 
-**Rationale**: Constituição, princípio II. O protótipo foi revertido justamente
-por ter sido escrito inteiro pela IA.
+**Rationale**: Constituição 2.0.0, princípio II. A regra 60/40 (versão 1.0.0)
+foi derrubada no alinhamento de gestores de 2026-10-31.
 
-**Alternatives considered**: Repartir por camada (IA nos adaptadores, pessoa no
-domínio) sem olhar o percentual. A constituição exige os dois: marca na task e
-mínimo de 40%, com a lógica de negócio na parte humana.
+**Alternatives considered**: Manter a divisão 60/40 por task. Descartada pela
+decisão dos gestores.
