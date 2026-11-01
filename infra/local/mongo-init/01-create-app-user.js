@@ -3,7 +3,11 @@
 // Para rodar de novo: docker compose -f infra/local/compose.yaml down -v (apaga os dados locais).
 const dbName = process.env.MONGO_APP_DATABASE || 'lhamalog_collector';
 const user = process.env.MONGO_APP_USERNAME || 'lhamalog';
-const pwd = process.env.MONGO_APP_PASSWORD || 'lhamalog';
+// Sem senha padrao (FR-026): o compose exige MONGO_APP_PASSWORD no infra/local/.env.
+const pwd = process.env.MONGO_APP_PASSWORD;
+if (!pwd) {
+  throw new Error('[lhamalog] MONGO_APP_PASSWORD vazio: defina em infra/local/.env');
+}
 
 const appDb = db.getSiblingDB(dbName);
 if (!appDb.getUser(user)) {

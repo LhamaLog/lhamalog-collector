@@ -11,11 +11,11 @@ services:
     restart: unless-stopped
     environment:
       MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:-root}
-      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:-root}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:?defina MONGO_ROOT_PASSWORD em infra/local/.env}
       MONGO_INITDB_DATABASE: ${MONGO_APP_DATABASE:-lhamalog_collector}
       MONGO_APP_DATABASE: ${MONGO_APP_DATABASE:-lhamalog_collector}
       MONGO_APP_USERNAME: ${MONGO_APP_USERNAME:-lhamalog}
-      MONGO_APP_PASSWORD: ${MONGO_APP_PASSWORD:-lhamalog}
+      MONGO_APP_PASSWORD: ${MONGO_APP_PASSWORD:?defina MONGO_APP_PASSWORD em infra/local/.env}
     ports:
       - "${MONGO_PORT:-27017}:27017"
     volumes:
@@ -43,24 +43,21 @@ services:
       timeout: 5s
       retries: 10
 
-  elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:9.4.5
-    container_name: lhamalog-collector-elasticsearch
+  # Destino de logs e traces aceitos pelo receptor OTLP (ADR_168, LLT-181).
+  # Mesma tag em src/test/java/.../TestcontainersConfiguration.java.
+  # Usuario e senha root so por variavel de ambiente (infra/local/.env, nao versionado).
+  openobserve:
+    image: public.ecr.aws/zinclabs/openobserve:v1.1.2
+    container_name: lhamalog-collector-openobserve
     restart: unless-stopped
     environment:
-      discovery.type: single-node
-      xpack.security.enabled: "false"
-      ES_JAVA_OPTS: ${ES_JAVA_OPTS:--Xms512m -Xmx512m}
+      ZO_DATA_DIR: /data
+      ZO_ROOT_USER_EMAIL: ${OPENOBSERVE_USERNAME:?defina OPENOBSERVE_USERNAME em infra/local/.env}
+      ZO_ROOT_USER_PASSWORD: ${OPENOBSERVE_PASSWORD:?defina OPENOBSERVE_PASSWORD em infra/local/.env}
     ports:
-      - "${ELASTICSEARCH_PORT:-9200}:9200"
+      - "${OPENOBSERVE_PORT:-5080}:5080"
     volumes:
-      - es-data:/usr/share/elasticsearch/data
-    healthcheck:
-      test: ["CMD-SHELL", "curl -fs http://localhost:9200/_cluster/health || exit 1"]
-      interval: 15s
-      timeout: 10s
-      retries: 20
-      start_period: 40s
+      - openobserve-data:/data
 
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.163.1
@@ -77,4 +74,4 @@ services:
 volumes:
   mongo-data:
   redis-data:
-  es-data:
+  openobserve-data:
