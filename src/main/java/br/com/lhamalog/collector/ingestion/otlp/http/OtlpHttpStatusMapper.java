@@ -15,7 +15,8 @@ import java.util.Map;
 /**
  * Decision to HTTP status map (T027a), per {@code contracts/otlp-export.md}: Unauthorized 401 with
  * {@code WWW-Authenticate: Bearer}; InvalidPayload 400, or 413 above the size limit, or 415 for an
- * unsupported encoding; EmptySuccess and Accepted 200 without {@code partial_success}; PartiallyAccepted 200
+ * unsupported encoding (only after the token was accepted: 401 comes first, T044); a batch refused by the
+ * destination as invalid data is also 400, never 503 (T040); EmptySuccess and Accepted 200 without {@code partial_success}; PartiallyAccepted 200
  * with {@code rejected_log_records} or {@code rejected_spans} and {@code error_message}; CatalogUnavailable
  * and DestinationUnavailable 503 with {@code Retry-After}. Messages are in English.
  */
@@ -44,7 +45,7 @@ public final class OtlpHttpStatusMapper {
 			case IngestionDecision.InvalidPayload p -> switch (p.reason()) {
 				case TOO_LARGE -> new HttpOutcome(413, Map.of(), status(Code.RESOURCE_EXHAUSTED, p.message()));
 				case UNSUPPORTED_ENCODING -> new HttpOutcome(415, Map.of(), status(Code.INVALID_ARGUMENT, p.message()));
-				case MALFORMED, ALL_RECORDS_INVALID -> new HttpOutcome(400, Map.of(), status(Code.INVALID_ARGUMENT, p.message()));
+				case MALFORMED, ALL_RECORDS_INVALID, REJECTED_BY_DESTINATION -> new HttpOutcome(400, Map.of(), status(Code.INVALID_ARGUMENT, p.message()));
 			};
 			case IngestionDecision.EmptySuccess e -> new HttpOutcome(200, Map.of(), success(signal));
 			case IngestionDecision.Accepted a -> new HttpOutcome(200, Map.of(), success(signal));
@@ -58,6 +59,11 @@ public final class OtlpHttpStatusMapper {
 
 	public static HttpOutcome methodNotAllowed() {
 		return new HttpOutcome(405, Map.of("Allow", "POST"), status(Code.UNIMPLEMENTED, "method not allowed; use POST"));
+	}
+
+	/** Too many requests in progress on this instance (T046); the sender should retry. */
+	public static HttpOutcome overloaded() {
+		return unavailable(1, "receiver busy, retry later");
 	}
 
 	public static HttpOutcome rejected(IngestionDecision.Reason reason, String message) {

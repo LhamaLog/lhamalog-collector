@@ -38,6 +38,16 @@ O que precisa passar:
 7. OpenObserve parado no teste de logs ou no de traces: erro de destino, sem
    confirmação de sucesso.
 8. HTTP e gRPC devolvem a mesma classe de resultado na mesma situação.
+9. Registro fora da janela de horário (mais de 4h50 atrás ou mais de 1 h no
+   futuro) é rejeitado e contado em `partial_success`; log sem `timeUnixNano`
+   usa `observedTimeUnixNano`.
+10. OpenObserve recusando o dado: 400 ou `partial_success`, nunca 503.
+11. Documentos gravados levam `serviceName`, `resourceAttributes`, `scopeName`,
+    `scopeVersion` e os campos de log/span (no OpenObserve, em minúsculas:
+    `servicename`, `resourceattributes`, ...).
+12. Sem token e com `Content-Type` inválido: 401, não 415.
+13. `max-message-size` 0 ou acima de 2147483647: o serviço não sobe.
+14. Acima do limite de requisições HTTP simultâneas: 503 com `Retry-After: 1`.
 
 Os testes sobem MongoDB, Redis e OpenObserve por Testcontainers. O Redis
 continua no projeto como fila da Varredura, mas não é destino da ingestão. O token do teste é aleatório e só existe na memória
@@ -53,8 +63,10 @@ Build completo, como pede a constituição antes do merge:
 
 Sobe a infra (Mongo, Redis, OpenObserve e o collector de observabilidade). O
 Redis fica no compose para a Varredura; o collector não grava nele.
-Antes, defina `OPENOBSERVE_USERNAME` e `OPENOBSERVE_PASSWORD` no `infra/local/.env`
-(não versionado):
+Antes, defina `MONGO_ROOT_PASSWORD`, `MONGO_APP_PASSWORD`, `OPENOBSERVE_USERNAME` e
+`OPENOBSERVE_PASSWORD` no `infra/local/.env` (não versionado; o compose para com
+erro se faltar algum). Se `MONGO_APP_PASSWORD` não for a senha de desenvolvimento
+da aplicação, defina também `MONGODB_URI` antes de subir a aplicação:
 
 ```powershell
 docker compose -f infra/local/compose.yaml up -d
@@ -86,6 +98,10 @@ esperado é HTTP 200 e um registro novo no stream OpenObserve `traces`.
 
 Para o destino indisponível, pare o OpenObserve e repita o POST válido.
 O esperado é HTTP 503.
+
+Para a janela de horário, envie um log com `timeUnixNano` de 6 h atrás. O
+esperado é HTTP 400 (único registro) com mensagem de horário fora da janela, e
+nada novo no stream.
 
 ## Fora deste ensaio
 

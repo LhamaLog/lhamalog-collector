@@ -5,6 +5,7 @@ import br.com.lhamalog.collector.ingestion.otlp.domain.ProductToken;
 import br.com.lhamalog.collector.ingestion.otlp.domain.ProductTokenValidity;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
+import com.github.benmanes.caffeine.cache.Ticker;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -29,9 +30,12 @@ import org.springframework.data.mongodb.core.query.Query;
  *
  * <p>The Bearer value is hashed (SHA-256, lowercase hex of the UTF-8 bytes) and looked up by
  * {@code tokenHash}; the product of the token is read to get its {@code tenantId}. The decision is delegated
- * to {@link ProductTokenValidity}. Hits and misses are cached by hash with Caffeine (30 seconds by default),
- * so a revocation shows up within the TTL. A MongoDB failure is "catalog unavailable" and is not cached. The
- * token value is never logged nor kept in memory beyond the call.
+ * to {@link ProductTokenValidity}. Results are cached by hash with Caffeine in two separate caches (T042,
+ * FR-008): valid tokens in the positive cache (30 seconds, up to 10,000 entries by default), so a revocation
+ * shows up within the TTL; refused tokens in a small negative cache (3 seconds, up to 1,000 entries by
+ * default), so a flood of random tokens can only evict other refusals and never a valid entry. A MongoDB
+ * failure is "catalog unavailable" and is not cached. The token value is never logged nor kept in memory
+ * beyond the call.
  */
 public class MongoProductTokenStore implements TokenValidator {
 
@@ -39,18 +43,69 @@ public class MongoProductTokenStore implements TokenValidator {
 
 	public static final Duration DEFAULT_CACHE_TTL = Duration.ofSeconds(30);
 
+	public static final CacheSettings DEFAULT_CACHE = new CacheSettings(DEFAULT_CACHE_TTL, 10_000,
+			Duration.ofSeconds(3), 1_000);
+
+	/**
+	 * Sizes and TTLs of the positive (valid tokens) and negative (refused tokens) caches.
+	 *
+	 * @param positiveTtl time a valid token stays cached; also the delay for a revocation to show up
+	 * @param positiveMaxSize maximum number of valid tokens cached
+	 * @param negativeTtl time a refused token stays cached
+	 * @param negativeMaxSize maximum number of refused tokens cached
+	 */
+	public record CacheSettings(Duration positiveTtl, long positiveMaxSize, Duration negativeTtl, long negativeMaxSize) {
+
+		public CacheSettings {
+			requirePositive(positiveTtl, "positive cache TTL");
+			requirePositive(negativeTtl, "negative cache TTL");
+			if (positiveMaxSize <= 0 || negativeMaxSize <= 0) {
+				throw new IllegalArgumentException("token cache max sizes must be positive");
+			}
+		}
+
+		private static void requirePositive(Duration value, String name) {
+			if (value == null || value.isNegative() || value.isZero()) {
+				throw new IllegalArgumentException(name + " must be positive");
+			}
+		}
+
+	}
+
 	private static final Logger log = LoggerFactory.getLogger(MongoProductTokenStore.class);
 
 	private final MongoOperations mongo;
 
 	private final Clock clock;
 
-	private final Cache<String, TokenValidationResult> cache;
+	private final Cache<String, TokenValidationResult> positive;
+
+	private final Cache<String, TokenValidationResult> negative;
 
 	public MongoProductTokenStore(MongoOperations mongo, Clock clock, Duration cacheTtl) {
+		this(mongo, clock, new CacheSettings(cacheTtl, DEFAULT_CACHE.positiveMaxSize(), DEFAULT_CACHE.negativeTtl(),
+				DEFAULT_CACHE.negativeMaxSize()), Ticker.systemTicker());
+	}
+
+	/**
+	 * @param ticker time source of the caches; tests pass a fake one. Eviction runs on the calling thread so
+	 * size limits apply deterministically.
+	 */
+	public MongoProductTokenStore(MongoOperations mongo, Clock clock, CacheSettings cache, Ticker ticker) {
 		this.mongo = mongo;
 		this.clock = clock;
-		this.cache = Caffeine.newBuilder().expireAfterWrite(cacheTtl).maximumSize(10_000).build();
+		this.positive = Caffeine.newBuilder()
+			.expireAfterWrite(cache.positiveTtl())
+			.maximumSize(cache.positiveMaxSize())
+			.ticker(ticker)
+			.executor(Runnable::run)
+			.build();
+		this.negative = Caffeine.newBuilder()
+			.expireAfterWrite(cache.negativeTtl())
+			.maximumSize(cache.negativeMaxSize())
+			.ticker(ticker)
+			.executor(Runnable::run)
+			.build();
 	}
 
 	@Override
@@ -59,7 +114,10 @@ public class MongoProductTokenStore implements TokenValidator {
 			return new TokenValidationResult.Unauthorized();
 		}
 		String hash = sha256Hex(bearerToken);
-		TokenValidationResult cached = cache.getIfPresent(hash);
+		TokenValidationResult cached = positive.getIfPresent(hash);
+		if (cached == null) {
+			cached = negative.getIfPresent(hash);
+		}
 		if (cached != null) {
 			return cached;
 		}
@@ -71,8 +129,25 @@ public class MongoProductTokenStore implements TokenValidator {
 			log.warn("Token catalog unavailable: {}", ex.getClass().getSimpleName());
 			return new TokenValidationResult.CatalogUnavailable(ex);
 		}
-		cache.put(hash, result);
+		if (result instanceof TokenValidationResult.Valid) {
+			positive.put(hash, result);
+		}
+		else {
+			negative.put(hash, result);
+		}
 		return result;
+	}
+
+	/** Entries currently held by the positive cache (for tests). */
+	long positiveCacheSize() {
+		positive.cleanUp();
+		return positive.estimatedSize();
+	}
+
+	/** Entries currently held by the negative cache (for tests). */
+	long negativeCacheSize() {
+		negative.cleanUp();
+		return negative.estimatedSize();
 	}
 
 	private TokenValidationResult lookup(String hash) {

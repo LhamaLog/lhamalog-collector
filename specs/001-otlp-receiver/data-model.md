@@ -86,12 +86,30 @@ Resultado do caso de uso, antes de virar HTTP ou gRPC.
 | `EmptySuccess` | Lote bem formado com zero registros | não é chamado |
 | `Accepted` | Um ou mais registros válidos e o destino confirmou todos eles | recebe só os válidos |
 | `PartiallyAccepted` | Há rejeitados e o destino confirmou os válidos | recebe só os válidos |
-| `DestinationUnavailable` | Havia registros válidos e o destino não confirmou | tentativa falhou; nada é confirmado ao remetente |
+| `InvalidPayload` (`REJECTED_BY_DESTINATION`) | O destino recusou todos os registros enviados como dado inválido (HTTP 400/413/415/422 ou `failed` igual ao total) | foi chamado e recusou; não repetível (HTTP 400, gRPC `INVALID_ARGUMENT`) |
+| `DestinationUnavailable` | Havia registros válidos e o destino não confirmou (5xx, 401/403/404/408/429, timeout, conexão, resposta não conferível) | tentativa falhou; nada é confirmado ao remetente |
 
 Transição: autenticar → classificar registros → ou rejeitar, ou entregar, ou
 devolver indisponível. Falha do destino no meio do lote válido termina em
 `DestinationUnavailable`, mesmo que alguns registros já tenham sido recusados
-na classificação.
+na classificação. Se o destino recusa só parte dos registros como dado
+inválido (HTTP 200 com `failed` > 0 e `successful + failed` igual ao enviado),
+o resultado é `PartiallyAccepted`, somando esses aos rejeitados na classificação.
+
+## TimestampWindow
+
+Janela de horário aceita (FR-019), configurada em `lhamalog.otlp.timestamp.*`:
+`max-age` (padrão `290m` = 4h50, abaixo das 5 h de `ZO_INGEST_ALLOWED_UPTO` do
+OpenObserve) e `max-future` (padrão `1h`). Um registro é rejeitado, com motivo
+contado no aceite parcial, quando seu horário efetivo é anterior a
+`agora - max-age` ou posterior a `agora + max-future`. Horário efetivo zero
+(ausente) não é checado e vira o instante de recebimento no `_timestamp`.
+
+## Scoped
+
+Par registro + `Resource` + `InstrumentationScope` de origem. A classificação
+devolve `Scoped<LogRecord>`/`Scoped<Span>` para que os sinks gravem o contexto
+OTLP (FR-021).
 
 ## LogRecordAssessment
 
@@ -107,13 +125,20 @@ Objeto JSON aceito no stream OpenObserve `logs` (organização `lhamalog`):
 |---|---|
 | `tenantId` | produto do token, sempre |
 | `productId` | token, sempre |
-| `_timestamp` | tempo do log, em microssegundos; se faltar, o instante de aceite |
+| `_timestamp` | horário efetivo do log em microssegundos: `timeUnixNano`; se 0, `observedTimeUnixNano`; se 0, o instante de aceite (FR-023) |
 | `receivedAt` | instante em que o collector aceitou |
 | `traceId` | hex dos 16 bytes, quando houver |
 | `spanId` | hex dos 8 bytes, quando houver |
+| `timeUnixNano` | do registro |
+| `observedTimeUnixNano` | do registro, como texto decimal sem sinal |
 | `severityNumber` | do registro |
+| `severityText` | do registro, quando houver |
+| `flags` | do registro (inteiro sem sinal) |
 | `body` | texto do body, quando houver |
 | `attributes` | atributos do registro em texto JSON, sem usar isso como produto |
+| `serviceName` | atributo `service.name` (string) do resource, quando houver |
+| `resourceAttributes` | atributos do resource em texto JSON |
+| `scopeName` / `scopeVersion` | do `InstrumentationScope`, quando houver |
 
 O envio é um array desses objetos em
 `POST /api/lhamalog/logs/_json`. Reenvio cria outros registros. O OpenObserve
@@ -140,11 +165,29 @@ configurável; organização `lhamalog`):
 | `name` | do span |
 | `startTimeUnixNano` | do span |
 | `endTimeUnixNano` | do span |
+| `traceState` | do span, quando houver |
+| `kind` | nome do enum (`SPAN_KIND_SERVER`, ...) |
+| `statusCode` / `statusMessage` | nome do enum (`STATUS_CODE_OK`, ...) e mensagem |
+| `events` | eventos em texto JSON (nome, horário, atributos) |
+| `links` | links em texto JSON (`traceId`/`spanId` em hex, `traceState`, atributos) |
 | `attributes` | atributos do span em texto JSON, sem usar isso como produto |
+| `serviceName` | atributo `service.name` (string) do resource, quando houver |
+| `resourceAttributes` | atributos do resource em texto JSON |
+| `scopeName` / `scopeVersion` | do `InstrumentationScope`, quando houver |
 
 O envio é um array desses objetos em `POST /api/lhamalog/traces/_json`, com a
 mesma regra de confirmação dos logs (HTTP 200, `failed` igual a zero e
 `successful` igual à quantidade enviada). Reenvio cria outros registros.
+
+## Nomes de campo no OpenObserve
+
+O collector envia os nomes em camelCase, mas o OpenObserve grava as colunas em
+minúsculas. Nas buscas SQL use: `tenantid`, `productid`, `receivedat`,
+`traceid`, `spanid`, `parentspanid`, `timeunixnano`, `observedtimeunixnano`,
+`severitynumber`, `severitytext`, `starttimeunixnano`, `endtimeunixnano`,
+`tracestate`, `statuscode`, `statusmessage`, `servicename`,
+`resourceattributes`, `scopename`, `scopeversion` (`body`, `name`, `kind`,
+`flags`, `events`, `links`, `attributes` e `_timestamp` não mudam).
 
 ## O que não é entidade desta feature
 

@@ -20,7 +20,11 @@ public sealed interface IngestionDecision {
 	record CatalogUnavailable() implements IngestionDecision {
 	}
 
-	/** Unreadable body, unsupported encoding, body above the limit, or every record invalid. Sink not called. */
+	/**
+	 * Unreadable body, unsupported encoding, body above the limit, or every record invalid (sink not called);
+	 * or every valid record refused by the destination as invalid data (reason
+	 * {@link Reason#REJECTED_BY_DESTINATION}).
+	 */
 	record InvalidPayload(Reason reason, String message) implements IngestionDecision {
 
 		public InvalidPayload {
@@ -43,7 +47,13 @@ public sealed interface IngestionDecision {
 		TOO_LARGE,
 
 		/** Well formed batch in which every record is invalid. */
-		ALL_RECORDS_INVALID
+		ALL_RECORDS_INVALID,
+
+		/**
+		 * The destination refused the records as invalid data (OpenObserve 4xx or per record failures). Not
+		 * retryable: sending the same data again gets the same answer (T040, FR-020).
+		 */
+		REJECTED_BY_DESTINATION
 
 	}
 
@@ -55,7 +65,10 @@ public sealed interface IngestionDecision {
 	record Accepted(int acceptedCount) implements IngestionDecision {
 	}
 
-	/** Some records rejected; the sink confirmed the valid ones. */
+	/**
+	 * Some records rejected, by the assessment or by the destination as invalid data; the destination
+	 * confirmed the others.
+	 */
 	record PartiallyAccepted(int acceptedCount, int rejectedCount, String errorMessage) implements IngestionDecision {
 
 		public PartiallyAccepted {

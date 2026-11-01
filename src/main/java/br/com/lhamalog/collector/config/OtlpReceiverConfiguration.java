@@ -12,6 +12,7 @@ import br.com.lhamalog.collector.ingestion.otlp.sink.OpenObserveClient;
 import br.com.lhamalog.collector.ingestion.otlp.sink.OpenObserveLogsSink;
 import br.com.lhamalog.collector.ingestion.otlp.sink.OpenObserveTracesSink;
 import br.com.lhamalog.collector.ingestion.otlp.sink.TracesSink;
+import com.github.benmanes.caffeine.cache.Ticker;
 import java.net.http.HttpClient;
 import java.time.Clock;
 import java.time.Duration;
@@ -29,8 +30,9 @@ import org.springframework.data.mongodb.core.MongoOperations;
 public class OtlpReceiverConfiguration {
 
 	@Bean
-	TokenValidator productTokenStore(MongoOperations mongo) {
-		return new MongoProductTokenStore(mongo, Clock.systemUTC(), MongoProductTokenStore.DEFAULT_CACHE_TTL);
+	TokenValidator productTokenStore(MongoOperations mongo, OtlpReceiverProperties properties) {
+		return new MongoProductTokenStore(mongo, Clock.systemUTC(), properties.tokenCache().toSettings(),
+				Ticker.systemTicker());
 	}
 
 	@Bean
@@ -51,27 +53,27 @@ public class OtlpReceiverConfiguration {
 	}
 
 	@Bean
-	ExportLogsService exportLogsService(TokenValidator tokens, LogsSink sink) {
-		return new ExportLogsService(tokens, sink);
+	ExportLogsService exportLogsService(TokenValidator tokens, LogsSink sink, OtlpReceiverProperties properties) {
+		return new ExportLogsService(tokens, sink, properties.timestamp().toWindow(), Clock.systemUTC());
 	}
 
 	@Bean
-	ExportTracesService exportTracesService(TokenValidator tokens, TracesSink sink) {
-		return new ExportTracesService(tokens, sink);
+	ExportTracesService exportTracesService(TokenValidator tokens, TracesSink sink, OtlpReceiverProperties properties) {
+		return new ExportTracesService(tokens, sink, properties.timestamp().toWindow(), Clock.systemUTC());
 	}
 
 	@Bean
 	@ConditionalOnBooleanProperty(name = "lhamalog.otlp.http.enabled", matchIfMissing = true)
 	OtlpHttpServer otlpHttpServer(OtlpReceiverProperties properties, ExportLogsService logs, ExportTracesService traces) {
 		return new OtlpHttpServer(properties.http().host(), properties.http().port(),
-				properties.maxMessageSize().toBytes(), logs, traces);
+				properties.maxMessageBytes(), logs, traces, properties.httpLimits().toLimits());
 	}
 
 	@Bean
 	@ConditionalOnBooleanProperty(name = "lhamalog.otlp.grpc.enabled", matchIfMissing = true)
 	OtlpGrpcServer otlpGrpcServer(OtlpReceiverProperties properties, ExportLogsService logs, ExportTracesService traces) {
 		return new OtlpGrpcServer(properties.grpc().host(), properties.grpc().port(),
-				Math.toIntExact(properties.maxMessageSize().toBytes()), logs, traces);
+				properties.maxMessageBytes(), logs, traces);
 	}
 
 }

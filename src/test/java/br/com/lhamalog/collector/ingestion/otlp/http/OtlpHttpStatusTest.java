@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import br.com.lhamalog.collector.ingestion.otlp.application.ExportLogsService;
 import br.com.lhamalog.collector.ingestion.otlp.application.ExportTracesService;
 import br.com.lhamalog.collector.ingestion.otlp.auth.TokenValidationResult;
+import br.com.lhamalog.collector.ingestion.otlp.sink.SinkRejectedException;
 import br.com.lhamalog.collector.ingestion.otlp.sink.SinkUnavailableException;
 import com.google.protobuf.ByteString;
 import com.google.rpc.Status;
@@ -41,6 +42,8 @@ class OtlpHttpStatusTest {
 
 	private volatile boolean destinationDown;
 
+	private volatile boolean destinationRefuses;
+
 	private OtlpHttpServer server;
 
 	@BeforeEach
@@ -51,7 +54,10 @@ class OtlpHttpStatusTest {
 			if (destinationDown) {
 				throw new SinkUnavailableException("down", 9, null);
 			}
-			delivered.addAll(records);
+			if (destinationRefuses) {
+				throw new SinkRejectedException(records.size(), 0, "HTTP 400 too old");
+			}
+			records.forEach(scoped -> delivered.add(scoped.record()));
 		});
 		var traces = new ExportTracesService(tokens, (tenant, product, spans) -> {
 		});
@@ -186,9 +192,9 @@ class OtlpHttpStatusTest {
 	@Test
 	void jsonWithHexIdsAndIntegerEnumsIsAcceptedAndAnsweredInJson() throws Exception {
 		String json = """
-				{"resourceLogs":[{"scopeLogs":[{"logRecords":[{"timeUnixNano":"1700000000000000000","severityNumber":9,
+				{"resourceLogs":[{"scopeLogs":[{"logRecords":[{"timeUnixNano":"%d","severityNumber":9,
 				"traceId":"5b8efff798038103d269b633813fc60c","spanId":"eee19b7ec3c1b174","body":{"stringValue":"hello"}}]}]}]}
-				""";
+				""".formatted(System.currentTimeMillis() * 1_000_000L);
 		HttpResponse<byte[]> response = post("/v1/logs", GOOD, "application/json", json.getBytes(StandardCharsets.UTF_8), null);
 		assertThat(response.statusCode()).isEqualTo(200);
 		assertThat(response.headers().firstValue("Content-Type")).contains("application/json");
@@ -202,6 +208,46 @@ class OtlpHttpStatusTest {
 		HttpResponse<byte[]> response = post("/v1/traces", GOOD, "application/x-protobuf", new byte[0], null);
 		assertThat(response.statusCode()).isEqualTo(200);
 		assertThat(ExportTraceServiceResponse.parseFrom(response.body()).hasPartialSuccess()).isFalse();
+	}
+
+	// T044, FR-023: authentication comes before content type and encoding
+
+	@Test
+	void unauthenticatedRequestIs401EvenWithUnsupportedContentTypeOrEncoding() throws Exception {
+		HttpResponse<byte[]> badType = post("/v1/logs", null, "text/plain", batch(), null);
+		assertThat(badType.statusCode()).isEqualTo(401);
+		assertThat(badType.headers().firstValue("WWW-Authenticate")).contains("Bearer");
+		assertThat(post("/v1/logs", "wrong", "application/x-protobuf", batch(), "br").statusCode()).isEqualTo(401);
+		assertThat(post("/v1/traces", null, "text/plain", batch(), null).statusCode()).isEqualTo(401);
+	}
+
+	@Test
+	void declaredLengthAboveTheLimitIs413WithoutReading() throws Exception {
+		HttpResponse<byte[]> response = post("/v1/logs", GOOD, "application/x-protobuf", new byte[LIMIT + 1], null);
+		assertThat(response.statusCode()).isEqualTo(413);
+	}
+
+	// T040, FR-020
+
+	@Test
+	void destinationRefusingDataIs400NotRetryable() throws Exception {
+		destinationRefuses = true;
+		HttpResponse<byte[]> response = post("/v1/logs", GOOD, "application/x-protobuf", batch(LogRecord.getDefaultInstance()), null);
+		assertThat(response.statusCode()).isEqualTo(400);
+		assertThat(response.headers().firstValue("Retry-After")).isEmpty();
+		assertThat(status(response).getMessage()).contains("refused by the destination").doesNotContain("too old");
+	}
+
+	@Test
+	void oldRecordIsCountedInPartialSuccess() throws Exception {
+		long old = (System.currentTimeMillis() - java.time.Duration.ofHours(6).toMillis()) * 1_000_000L;
+		HttpResponse<byte[]> response = post("/v1/logs", GOOD, "application/x-protobuf",
+				batch(LogRecord.getDefaultInstance(), LogRecord.newBuilder().setTimeUnixNano(old).build()), null);
+		assertThat(response.statusCode()).isEqualTo(200);
+		var partial = ExportLogsServiceResponse.parseFrom(response.body()).getPartialSuccess();
+		assertThat(partial.getRejectedLogRecords()).isEqualTo(1);
+		assertThat(partial.getErrorMessage()).contains("outside the accepted window");
+		assertThat(delivered).hasSize(1);
 	}
 
 }

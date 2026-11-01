@@ -142,6 +142,23 @@ Código em `src/main/java/br/com/lhamalog/collector/`. Testes em `src/test/java/
 
 ---
 
+## Phase 7: Correções da revisão do PR #2
+
+**Purpose**: Corrigir os pontos da revisão do PR #2 (FR-019 a FR-026). Specs primeiro (T039), depois código e testes, por último `clean verify` (T048).
+
+- [x] T039 Atualizar `spec.md` (FR-019 a FR-026 e edge cases), `plan.md`, `data-model.md`, `contracts/otlp-export.md`, `research.md`, `quickstart.md` e `README.md` com as correções desta fase
+- [x] T040 Janela de `_timestamp` e recusa do destino (FR-019, FR-020): criar `domain/TimestampWindow.java` e `domain/Scoped.java`; `LogRecordAssessment`/`SpanAssessment` rejeitam fora da janela; criar `sink/SinkRejectedException.java`; `OpenObserveClient` trata 400/413/415/422 e `failed` > 0 como recusa de dado; `BatchIngestion` responde `REJECTED_BY_DESTINATION` (400) ou parcial; `OtlpHttpStatusMapper` mapeia para 400. Testes: `TimestampWindowTest`, `LogRecordAssessmentTest`, `SpanAssessmentTest`, `ExportLogsFailureTest`, `OpenObserveSinkTest`, `OtlpHttpStatusTest`
+- [x] T041 Contexto OTLP nos documentos (FR-021): `OtlpValues.putContext`, `OpenObserveLogsSink` e `OpenObserveTracesSink` gravam `serviceName`, `resourceAttributes`, `scopeName`, `scopeVersion` e os campos de log/span; mapeamento em `data-model.md`. Testes em `OpenObserveSinkTest`
+- [x] T042 Cache negativo de token (FR-022): `MongoProductTokenStore` com `CacheSettings` (positivo 30 s/10000, negativo 3 s/1000), sem cache de falha do Mongo. Teste `MongoProductTokenStoreCacheTest`
+- [x] T043 Fallback do horário do log (FR-023): `LogRecordAssessment.effectiveTimeUnixNano` (time, observed, recebimento) usado na janela e no `_timestamp`. Testes em `LogRecordAssessmentTest`, `ExportLogsFailureTest` e `OpenObserveSinkTest`
+- [x] T044 401 antes de 415 (FR-024): `OtlpHttpServer` valida content type, encoding e `Content-Length` só depois do token. Teste em `OtlpHttpStatusTest`
+- [x] T045 Validação de configuração (FR-025): `OtlpReceiverProperties` valida `max-message-size` (> 0 e ≤ 2147483647) e os grupos `timestamp`, `token-cache` e `http-limits`. Teste `OtlpReceiverPropertiesTest`
+- [x] T046 Endurecer o servidor HTTP do JDK (FR-026): `http/HttpLimits.java`, semáforo de concorrência com 503 + `Retry-After: 1`, propriedades `sun.net.httpserver.*` e recomendação de proxy reverso no README. Teste `OtlpHttpLimitsTest`
+- [x] T047 `.env` obrigatório (FR-026): `infra/local/.env.example` sem senhas do Mongo, `compose.yaml` com `${MONGO_ROOT_PASSWORD:?...}`/`${MONGO_APP_PASSWORD:?...}` e `mongo-init/01-create-app-user.js` sem senha padrão
+- [x] T048 Executar `.\mvnw.cmd clean verify` na máquina local
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase Dependencies

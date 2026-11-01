@@ -29,6 +29,16 @@ A IA implementa toda a feature (constituição 2.0.0). A lógica de validade, de
 atribuição e de classe de erro fica isolada em `domain` e `application` para a
 revisão do desenvolvedor.
 
+Revisão do PR #2 (Phase 7, FR-019 a FR-026): janela de `_timestamp`
+(`lhamalog.otlp.timestamp.max-age=290m`, `max-future=1h`); recusa de dado pelo
+OpenObserve vira 400/`INVALID_ARGUMENT`/parcial, e 503 fica para 5xx, timeout e
+conexão; contexto OTLP gravado nos documentos; cache negativo de token
+(`lhamalog.otlp.token-cache.*`: positivo 30 s/10000, negativo 3 s/1000); 401
+antes de 415; validação de `max-message-size`; limites do servidor HTTP do JDK
+(`lhamalog.otlp.http-limits.*`: 200 requisições simultâneas, 1000 conexões,
+30 s de leitura/escrita/ociosidade, 200 ociosas) com proxy reverso recomendado;
+senhas do Mongo obrigatórias no `infra/local/.env`.
+
 ## Technical Context
 
 **Language/Version**: Java 25

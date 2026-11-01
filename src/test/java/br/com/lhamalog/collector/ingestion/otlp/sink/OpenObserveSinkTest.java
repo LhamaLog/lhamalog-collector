@@ -4,12 +4,16 @@ package br.com.lhamalog.collector.ingestion.otlp.sink;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import br.com.lhamalog.collector.ingestion.otlp.domain.Scoped;
 import com.google.protobuf.ByteString;
 import com.sun.net.httpserver.HttpServer;
 import io.opentelemetry.proto.common.v1.AnyValue;
+import io.opentelemetry.proto.common.v1.InstrumentationScope;
 import io.opentelemetry.proto.common.v1.KeyValue;
+import io.opentelemetry.proto.resource.v1.Resource;
 import io.opentelemetry.proto.logs.v1.LogRecord;
 import io.opentelemetry.proto.trace.v1.Span;
+import io.opentelemetry.proto.trace.v1.Status;
 import java.net.InetSocketAddress;
 import java.net.http.HttpClient;
 import java.nio.charset.StandardCharsets;
@@ -80,7 +84,7 @@ class OpenObserveSinkTest {
 			.setBody(AnyValue.newBuilder().setStringValue("hello"))
 			.addAttributes(KeyValue.newBuilder().setKey("productId").setValue(AnyValue.newBuilder().setStringValue("evil")))
 			.build();
-		new OpenObserveLogsSink(client, "logs", CLOCK).deliver("tenant-1", "product-a", List.of(log));
+		new OpenObserveLogsSink(client, "logs", CLOCK).deliver("tenant-1", "product-a", List.of(Scoped.of(log)));
 		assertThat(lastPath.get()).isEqualTo("/api/lhamalog/logs/_json");
 		assertThat(lastAuth.get()).startsWith("Basic ");
 		JsonNode doc = first(lastBody.get());
@@ -97,7 +101,7 @@ class OpenObserveSinkTest {
 
 	@Test
 	void logWithoutTimeUsesAcceptInstant() {
-		new OpenObserveLogsSink(client, "logs", CLOCK).deliver("t", "p", List.of(LogRecord.getDefaultInstance()));
+		new OpenObserveLogsSink(client, "logs", CLOCK).deliver("t", "p", List.of(Scoped.of(LogRecord.getDefaultInstance())));
 		JsonNode doc = first(lastBody.get());
 		assertThat(doc.get("_timestamp").asLong()).isEqualTo(CLOCK.instant().toEpochMilli() * 1000);
 		assertThat(doc.has("body")).isFalse();
@@ -114,7 +118,7 @@ class OpenObserveSinkTest {
 			.setStartTimeUnixNano(2_000_000)
 			.setEndTimeUnixNano(3_000_000)
 			.build();
-		new OpenObserveTracesSink(client, "traces", CLOCK).deliver("tenant-1", "product-a", List.of(span));
+		new OpenObserveTracesSink(client, "traces", CLOCK).deliver("tenant-1", "product-a", List.of(Scoped.of(span)));
 		assertThat(lastPath.get()).isEqualTo("/api/lhamalog/traces/_json");
 		JsonNode doc = first(lastBody.get());
 		assertThat(doc.get("parentSpanId").asString()).isEqualTo("0102030405060708");
@@ -128,22 +132,126 @@ class OpenObserveSinkTest {
 	void non200FailedOrMissingConfirmationIsUnavailable() {
 		var sink = new OpenObserveLogsSink(client, "logs", CLOCK);
 		status = 500;
-		assertThatThrownBy(() -> sink.deliver("t", "p", List.of(LogRecord.getDefaultInstance())))
+		assertThatThrownBy(() -> sink.deliver("t", "p", List.of(Scoped.of(LogRecord.getDefaultInstance()))))
+			.isInstanceOf(SinkUnavailableException.class);
+		status = 429;
+		assertThatThrownBy(() -> sink.deliver("t", "p", List.of(Scoped.of(LogRecord.getDefaultInstance()))))
+			.isInstanceOf(SinkUnavailableException.class);
+		status = 401;
+		assertThatThrownBy(() -> sink.deliver("t", "p", List.of(Scoped.of(LogRecord.getDefaultInstance()))))
 			.isInstanceOf(SinkUnavailableException.class);
 		status = 200;
-		answer = "{\"code\":200,\"status\":[{\"name\":\"x\",\"successful\":0,\"failed\":1}]}";
-		assertThatThrownBy(() -> sink.deliver("t", "p", List.of(LogRecord.getDefaultInstance())))
+		answer = "{\"code\":200,\"status\":[{\"name\":\"x\",\"successful\":0,\"failed\":0}]}";
+		assertThatThrownBy(() -> sink.deliver("t", "p", List.of(Scoped.of(LogRecord.getDefaultInstance()))))
 			.isInstanceOf(SinkUnavailableException.class);
 		answer = "{\"code\":200,\"status\":[{\"name\":\"x\",\"successful\":1,\"failed\":0}]}";
-		assertThatThrownBy(() -> sink.deliver("t", "p", List.of(LogRecord.getDefaultInstance(), LogRecord.getDefaultInstance())))
+		assertThatThrownBy(() -> sink.deliver("t", "p", List.of(Scoped.of(LogRecord.getDefaultInstance()), Scoped.of(LogRecord.getDefaultInstance()))))
 			.isInstanceOf(SinkUnavailableException.class);
 	}
 
 	@Test
 	void unreachableOpenObserveIsUnavailable() {
 		var dead = new OpenObserveClient(HttpClient.newHttpClient(), "http://127.0.0.1:1", "lhamalog", null, null);
-		assertThatThrownBy(() -> new OpenObserveLogsSink(dead, "logs", CLOCK).deliver("t", "p", List.of(LogRecord.getDefaultInstance())))
+		assertThatThrownBy(() -> new OpenObserveLogsSink(dead, "logs", CLOCK).deliver("t", "p", List.of(Scoped.of(LogRecord.getDefaultInstance()))))
 			.isInstanceOf(SinkUnavailableException.class);
+	}
+
+	// T040, FR-020: invalid data refused by OpenObserve is not "unavailable"
+
+	@Test
+	void dataErrorStatusesAreRejectionsOfTheWholeBatch() {
+		var sink = new OpenObserveLogsSink(client, "logs", CLOCK);
+		for (int code : new int[] { 400, 413, 415, 422 }) {
+			status = code;
+			answer = "{\"code\":" + code + ",\"message\":\"too old\"}";
+			assertThatThrownBy(() -> sink.deliver("t", "p",
+					List.of(Scoped.of(LogRecord.getDefaultInstance()), Scoped.of(LogRecord.getDefaultInstance()))))
+				.isInstanceOfSatisfying(SinkRejectedException.class, ex -> {
+					assertThat(ex.rejectedCount()).isEqualTo(2);
+					assertThat(ex.acceptedCount()).isZero();
+				});
+		}
+	}
+
+	@Test
+	void perRecordFailuresInA200AreRejectionsWithCounts() {
+		var sink = new OpenObserveLogsSink(client, "logs", CLOCK);
+		answer = "{\"code\":200,\"status\":[{\"name\":\"x\",\"successful\":1,\"failed\":2}]}";
+		assertThatThrownBy(() -> sink.deliver("t", "p", List.of(Scoped.of(LogRecord.getDefaultInstance()),
+				Scoped.of(LogRecord.getDefaultInstance()), Scoped.of(LogRecord.getDefaultInstance()))))
+			.isInstanceOfSatisfying(SinkRejectedException.class, ex -> {
+				assertThat(ex.rejectedCount()).isEqualTo(2);
+				assertThat(ex.acceptedCount()).isEqualTo(1);
+			});
+	}
+
+	// T041, T043, FR-021, FR-022
+
+	private static final Resource RESOURCE = Resource.newBuilder()
+		.addAttributes(KeyValue.newBuilder().setKey("service.name").setValue(AnyValue.newBuilder().setStringValue("checkout")))
+		.addAttributes(KeyValue.newBuilder().setKey("host.name").setValue(AnyValue.newBuilder().setStringValue("vm-1")))
+		.build();
+
+	private static final InstrumentationScope SCOPE = InstrumentationScope.newBuilder().setName("io.lib").setVersion("2.1").build();
+
+	@Test
+	void logDocumentKeepsOtlpContext() {
+		LogRecord log = LogRecord.newBuilder()
+			.setTimeUnixNano(1_700_000_000_000_000_000L)
+			.setObservedTimeUnixNano(1_700_000_000_500_000_000L)
+			.setSeverityText("WARN")
+			.setFlags(1)
+			.build();
+		new OpenObserveLogsSink(client, "logs", CLOCK).deliver("t", "p", List.of(new Scoped<>(RESOURCE, SCOPE, log)));
+		JsonNode doc = first(lastBody.get());
+		assertThat(doc.get("serviceName").asString()).isEqualTo("checkout");
+		assertThat(doc.get("resourceAttributes").asString()).isEqualTo("{\"service.name\":\"checkout\",\"host.name\":\"vm-1\"}");
+		assertThat(doc.get("scopeName").asString()).isEqualTo("io.lib");
+		assertThat(doc.get("scopeVersion").asString()).isEqualTo("2.1");
+		assertThat(doc.get("severityText").asString()).isEqualTo("WARN");
+		assertThat(doc.get("observedTimeUnixNano").asString()).isEqualTo("1700000000500000000");
+		assertThat(doc.get("flags").asLong()).isEqualTo(1);
+		assertThat(doc.get("_timestamp").asLong()).isEqualTo(1_700_000_000_000_000L);
+	}
+
+	@Test
+	void logWithoutTimeUsesObservedTimeBeforeAcceptInstant() {
+		LogRecord log = LogRecord.newBuilder().setObservedTimeUnixNano(1_700_000_000_500_000_000L).build();
+		new OpenObserveLogsSink(client, "logs", CLOCK).deliver("t", "p", List.of(Scoped.of(log)));
+		assertThat(first(lastBody.get()).get("_timestamp").asLong()).isEqualTo(1_700_000_000_500_000L);
+	}
+
+	@Test
+	void spanDocumentKeepsKindStatusEventsLinksAndContext() {
+		Span span = Span.newBuilder()
+			.setTraceId(ByteString.fromHex("5b8efff798038103d269b633813fc60c"))
+			.setSpanId(ByteString.fromHex("eee19b7ec3c1b174"))
+			.setName("GET /")
+			.setKind(Span.SpanKind.SPAN_KIND_SERVER)
+			.setStatus(Status.newBuilder().setCode(Status.StatusCode.STATUS_CODE_ERROR).setMessage("boom"))
+			.setStartTimeUnixNano(2_000_000)
+			.setEndTimeUnixNano(3_000_000)
+			.addEvents(Span.Event.newBuilder()
+				.setName("exception")
+				.setTimeUnixNano(2_500_000)
+				.addAttributes(KeyValue.newBuilder().setKey("exception.type").setValue(AnyValue.newBuilder().setStringValue("IOException"))))
+			.addLinks(Span.Link.newBuilder()
+				.setTraceId(ByteString.fromHex("0102030405060708090a0b0c0d0e0f10"))
+				.setSpanId(ByteString.fromHex("1112131415161718"))
+				.setTraceState("k=v"))
+			.build();
+		new OpenObserveTracesSink(client, "traces", CLOCK).deliver("t", "p", List.of(new Scoped<>(RESOURCE, SCOPE, span)));
+		JsonNode doc = first(lastBody.get());
+		assertThat(doc.get("kind").asString()).isEqualTo("SPAN_KIND_SERVER");
+		assertThat(doc.get("statusCode").asString()).isEqualTo("STATUS_CODE_ERROR");
+		assertThat(doc.get("statusMessage").asString()).isEqualTo("boom");
+		assertThat(doc.get("events").asString())
+			.isEqualTo("[{\"timeUnixNano\":\"2500000\",\"name\":\"exception\",\"attributes\":{\"exception.type\":\"IOException\"}}]");
+		assertThat(doc.get("links").asString()).isEqualTo(
+				"[{\"traceId\":\"0102030405060708090a0b0c0d0e0f10\",\"spanId\":\"1112131415161718\",\"traceState\":\"k=v\",\"attributes\":{}}]");
+		assertThat(doc.get("serviceName").asString()).isEqualTo("checkout");
+		assertThat(doc.get("scopeName").asString()).isEqualTo("io.lib");
+		assertThat(doc.get("scopeVersion").asString()).isEqualTo("2.1");
 	}
 
 }

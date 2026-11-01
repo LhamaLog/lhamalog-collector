@@ -144,9 +144,15 @@ O collector recebe logs e traces OTLP de cada produto e grava no **OpenObserve**
 
 No local as portas são 4328/4327 porque 4318/4317 já são do OpenTelemetry Collector do compose. Sobrescreva com `OTLP_RECEIVER_HTTP_PORT` / `OTLP_RECEIVER_GRPC_PORT`; desligue um canal com `OTLP_RECEIVER_HTTP_ENABLED=false` / `OTLP_RECEIVER_GRPC_ENABLED=false`. Limite de mensagem: `OTLP_RECEIVER_MAX_MESSAGE_SIZE` (64MB, medido depois de descomprimir).
 
-**Autenticação:** header `Authorization: Bearer <token>` (no gRPC, metadata `authorization`). O collector calcula o SHA-256 (hex minúsculo) do token e procura em `tokenHash` na coleção MongoDB `product_tokens` (`productId`, `tokenHash`, `status` `ACTIVE`/`REVOKED`, `createdAt`, `revokedAt`, `expiresAt`). O produto é lido em `products` (campo `productId`), e o `tenantId` dele é gravado junto. Cada log/span no OpenObserve leva `tenantId` e `productId` do token; o conteúdo do lote não troca esses campos. O collector só lê essas coleções; cadastro, rotação e revogação de token ficam fora dele. Resultados ficam em cache por 30 s (uma revogação vale em até 30 s).
+**Autenticação:** header `Authorization: Bearer <token>` (no gRPC, metadata `authorization`). O collector calcula o SHA-256 (hex minúsculo) do token e procura em `tokenHash` na coleção MongoDB `product_tokens` (`productId`, `tokenHash`, `status` `ACTIVE`/`REVOKED`, `createdAt`, `revokedAt`, `expiresAt`). O produto é lido em `products` (campo `productId`), e o `tenantId` dele é gravado junto. Cada log/span no OpenObserve leva `tenantId` e `productId` do token; o conteúdo do lote não troca esses campos. O collector só lê essas coleções; cadastro, rotação e revogação de token ficam fora dele. Tokens válidos ficam em cache por 30 s (uma revogação vale em até 30 s); tokens recusados ficam num cache negativo menor, de 3 s e até 1000 entradas, para um token errado repetido não bater no MongoDB a cada requisição. Falha do MongoDB nunca entra em cache. Ajuste com `OTLP_RECEIVER_TOKEN_CACHE_TTL`, `OTLP_RECEIVER_TOKEN_CACHE_MAX_SIZE`, `OTLP_RECEIVER_NEGATIVE_TOKEN_CACHE_TTL` e `OTLP_RECEIVER_NEGATIVE_TOKEN_CACHE_MAX_SIZE`.
 
-**Respostas:** 200 (com `partial_success` quando parte dos registros é inválida), 400 (corpo ilegível ou todos inválidos), 401 + `WWW-Authenticate: Bearer`, 413 (acima do limite), 415 (encoding/content type não suportado), 503 + `Retry-After` (MongoDB ou OpenObserve fora). Contrato completo em `specs/001-otlp-receiver/contracts/otlp-export.md`.
+**Respostas:** 200 (com `partial_success` quando parte dos registros é inválida ou recusada), 400 (corpo ilegível, todos inválidos ou todos recusados pelo OpenObserve como dado inválido), 401 + `WWW-Authenticate: Bearer` (a autenticação vem antes de 413/415), 413 (acima do limite), 415 (encoding/content type não suportado), 503 + `Retry-After` (MongoDB ou OpenObserve fora, timeout, 5xx ou servidor HTTP no limite de requisições simultâneas). Contrato completo em `specs/001-otlp-receiver/contracts/otlp-export.md`.
+
+**Janela de horário:** o OpenObserve só aceita `_timestamp` de até 5 h atrás (`ZO_INGEST_ALLOWED_UPTO`). O collector recusa antes, e conta em `partial_success`, log/span mais antigo que 4h50 (`OTLP_RECEIVER_TIMESTAMP_MAX_AGE`, padrão `290m`) ou mais de 1 h no futuro (`OTLP_RECEIVER_TIMESTAMP_MAX_FUTURE`). O horário do log é `timeUnixNano`; se vier 0, `observedTimeUnixNano`; se os dois vierem 0, a hora de recebimento (sem checar janela). Span usa `startTimeUnixNano`. Se mesmo assim o OpenObserve recusar dados (HTTP 400/413/415/422 ou `failed` > 0 na resposta), isso não é repetível: vira 400 ou `partial_success`, nunca 503.
+
+**Campos gravados:** além de `tenantId`, `productId` e dos atributos do registro, cada documento leva o contexto OTLP: `serviceName` (atributo `service.name` do resource), `resourceAttributes` (JSON), `scopeName`, `scopeVersion`; logs também `severityText`, `observedTimeUnixNano` e `flags`; spans também `traceState`, `kind`, `statusCode`, `statusMessage`, `events` e `links` (JSON). O OpenObserve grava nomes de campo em minúsculas (`servicename`, `resourceattributes`, `scopename`, ...): use esses nomes nas buscas SQL. Mapeamento completo em `specs/001-otlp-receiver/data-model.md`.
+
+**Servidor HTTP:** o OTLP/HTTP usa o servidor HTTP do JDK, com limites: até 200 requisições simultâneas (`OTLP_RECEIVER_HTTP_MAX_CONCURRENT_REQUESTS`; acima disso, 503 + `Retry-After: 1`), 1000 conexões (`OTLP_RECEIVER_HTTP_MAX_CONNECTIONS`), 30 s para ler a requisição e escrever a resposta (`OTLP_RECEIVER_HTTP_READ_TIMEOUT` / `OTLP_RECEIVER_HTTP_WRITE_TIMEOUT`), 30 s de conexão ociosa (`OTLP_RECEIVER_HTTP_IDLE_TIMEOUT`) e 200 conexões ociosas (`OTLP_RECEIVER_HTTP_MAX_IDLE_CONNECTIONS`). Esses tempos viram propriedades `sun.net.httpserver.*`, que valem para a JVM inteira; um `-Dsun.net.httpserver...` passado na linha de comando tem prioridade. Em produção, **coloque um proxy reverso** (nginx, Traefik ou o balanceador da nuvem) na frente da porta 4318, com TLS, limite de corpo e de taxa; o servidor do JDK não deve ficar exposto direto na internet. `OTLP_RECEIVER_MAX_MESSAGE_SIZE` precisa ser maior que 0 e no máximo 2147483647 bytes, senão o serviço não sobe.
 
 O **Redis** continua no projeto como fila de mensagens da Varredura; não é destino do collector.
 
@@ -198,6 +204,8 @@ No Linux/macOS: `OTLP_ENABLED=false make run-local`.
 | `OPENOBSERVE_ORGANIZATION` | não | `lhamalog` |
 | `OPENOBSERVE_LOGS_STREAM` / `OPENOBSERVE_TRACES_STREAM` | não | `logs` / `traces` |
 | `OTLP_RECEIVER_HTTP_PORT` / `OTLP_RECEIVER_GRPC_PORT` | não | `4318` / `4317` |
+| `OTLP_RECEIVER_TIMESTAMP_MAX_AGE` / `OTLP_RECEIVER_TIMESTAMP_MAX_FUTURE` | não | `290m` / `1h` |
+| `OTLP_RECEIVER_HTTP_MAX_CONCURRENT_REQUESTS` / `OTLP_RECEIVER_HTTP_MAX_CONNECTIONS` | não | `200` / `1000` |
 | `OTLP_METRICS_URL` | sim | `http://otel-collector:4318/v1/metrics` |
 | `OTLP_TRACES_URL` | sim | `http://otel-collector:4318/v1/traces` |
 | `OTLP_ENABLED` | não | `true` |
@@ -213,7 +221,7 @@ Tudo que o ambiente local usa fica em **uma pasta só**, `infra/local/`:
 ```
 infra/local/
 ├── compose.yaml                    # MongoDB, Redis, OpenObserve e OpenTelemetry Collector
-├── .env.example                    # portas e credenciais de desenvolvimento (copie para .env, opcional)
+├── .env.example                    # portas e credenciais de desenvolvimento (copie para .env, obrigatório)
 ├── mongo-init/
 │   └── 01-create-app-user.js       # cria o banco lhamalog_collector e o usuário da aplicação
 └── otel-collector/
@@ -230,12 +238,13 @@ infra/local/
 Subir, conferir e rodar (PowerShell, na raiz do repositório; precisa do Docker Desktop aberto):
 
 ```powershell
-Copy-Item infra\local\.env.example infra\local\.env   # preencha OPENOBSERVE_USERNAME (e-mail) e OPENOBSERVE_PASSWORD
+Copy-Item infra\local\.env.example infra\local\.env   # preencha MONGO_ROOT_PASSWORD, MONGO_APP_PASSWORD, OPENOBSERVE_USERNAME (e-mail) e OPENOBSERVE_PASSWORD
 make infra-up                                           # ou: docker compose -f infra/local/compose.yaml up -d
 make infra-ps                                           # aguarde os serviços ficarem "healthy"
 make run-local                                          # ou: .\mvnw.cmd spring-boot:run "-Dspring-boot.run.profiles=local"
 ```
 
+- O `.env` é obrigatório: `MONGO_ROOT_PASSWORD`, `MONGO_APP_PASSWORD`, `OPENOBSERVE_USERNAME` e `OPENOBSERVE_PASSWORD` não têm valor padrão, e o compose para com erro (`defina ... em infra/local/.env`) se faltarem. A aplicação local se conecta com `MONGODB_URI`; se a senha do usuário da aplicação não for a padrão de desenvolvimento, defina `$env:MONGODB_URI="mongodb://<usuario>:<senha>@localhost:27017/lhamalog_collector?authSource=lhamalog_collector"`. A senha do usuário da aplicação só é aplicada na primeira subida (volume vazio).
 - Saúde da aplicação: `http://localhost:8080/actuator/health` (no perfil local mostra o estado de Mongo e Redis).
 - OpenObserve: `http://localhost:5080`, com o usuário e a senha do seu `infra/local/.env`. A aplicação lê `OPENOBSERVE_USERNAME`/`OPENOBSERVE_PASSWORD` do ambiente.
 - Métricas e traces enviados ao collector aparecem em `make infra-logs` (ou `docker compose -f infra/local/compose.yaml logs -f otel-collector`).

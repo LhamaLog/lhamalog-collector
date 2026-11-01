@@ -198,6 +198,21 @@ Quando todos os registros são inválidos, a resposta é 400 e o destino não é
 chamado. 200 com `rejected_*` igual ao total seria sucesso parcial para o
 cliente OTLP, e a spec desta feature não conta isso como sucesso.
 
+**Atualização (PR #2, FR-019, FR-020, FR-024, FR-026)**:
+
+- Recusa de dado pelo OpenObserve (HTTP 400/413/415/422, ou 200 com `failed` > 0
+  e `successful + failed` igual ao enviado) é dado inválido: 400 /
+  `INVALID_ARGUMENT` se nada foi aceito (`REJECTED_BY_DESTINATION`), ou aceite
+  parcial. 503 / `UNAVAILABLE` fica para 5xx, 401/403/404/408/429 do
+  OpenObserve (configuração ou carga do nosso lado), timeout, conexão e
+  resposta não conferível. O texto do OpenObserve vai só para o log em WARN; a
+  resposta ao remetente usa uma mensagem fixa.
+- No HTTP, o token é conferido antes de `Content-Type`, `Content-Encoding` e
+  `Content-Length`: quem não se autenticou recebe 401, não 415/413, e não
+  descobre nada sobre o que o servidor aceita.
+- Acima do limite de requisições simultâneas do servidor HTTP, 503 com
+  `Retry-After: 1` (backpressure, que a spec OTLP manda repetir).
+
 **Rationale**: Tabela alinhada à spec OTLP/HTTP e OTLP/gRPC (sucesso 200,
 dado inválido permanente 400, corpo grande 413, backpressure 503 com retry).
 `UNAUTHENTICATED` e `INVALID_ARGUMENT` não são retryable; `UNAVAILABLE` é.
@@ -223,6 +238,16 @@ Span inválido quando:
 - `parent_span_id` presente e com tamanho diferente de 8 bytes
 - `name` vazio
 - `end_time_unix_nano` diferente de zero e anterior a `start_time_unix_nano`
+
+Registro fora da janela de horário (FR-019) também é inválido: horário
+efetivo anterior a `agora - lhamalog.otlp.timestamp.max-age` (padrão `290m`) ou
+posterior a `agora + max-future` (padrão `1h`). O horário efetivo do log é
+`time_unix_nano`; se 0, `observed_time_unix_nano` (FR-023); se os dois forem 0,
+não há checagem e o `_timestamp` é o instante de recebimento. No span é
+`start_time_unix_nano`. O motivo: o OpenObserve recusa `_timestamp` mais antigo
+que `ZO_INGEST_ALLOWED_UPTO` (5 h por padrão) e marcava o lote inteiro como
+falha, o que antes virava 503 e um loop de retry no cliente. A margem de 10 min
+cobre diferença de relógio e o tempo até a entrega.
 
 Um log sem body continua válido. Essas regras são lógica de negócio, ficam no
 pacote `domain` e são revisadas pelo desenvolvedor (constituição 2.0.0, princípio II).

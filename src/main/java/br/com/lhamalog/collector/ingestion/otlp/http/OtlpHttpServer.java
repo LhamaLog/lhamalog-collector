@@ -23,8 +23,11 @@ import java.io.UncheckedIOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.Locale;
+import java.util.Map;
+import java.util.TreeMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Semaphore;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.ZipException;
 import org.slf4j.Logger;
@@ -36,8 +39,17 @@ import org.springframework.context.SmartLifecycle;
  * separate from the Spring MVC port. Uses the JDK HTTP server with virtual threads.
  *
  * <p>Accepts {@code application/x-protobuf} and {@code application/json}, identity or gzip. The token is
- * checked before the body is read; the body is cut at the configured limit after decompression (413). The
+ * checked before anything about the body: a request without a valid token gets 401 even when its content
+ * type or encoding is unsupported (T044, FR-023). The body is cut at the configured limit after
+ * decompression (413), and a {@code Content-Length} above the limit is refused without reading. The
  * response {@code Content-Type} repeats the request one.
+ *
+ * <p>Protection (T046, FR-025, {@link HttpLimits}): at most {@code maxConcurrentRequests} requests are
+ * handled at once, the others get 503 with {@code Retry-After}; connection count, request and response time
+ * and idle keep-alive connections are bounded through the {@code sun.net.httpserver.*} system properties.
+ * Those properties are JVM wide and read once, when the first JDK HTTP server of the JVM is created; a value
+ * already set (for example with {@code -D}) wins. This server is not meant to face the internet directly:
+ * put a reverse proxy in front of it in production.
  */
 public class OtlpHttpServer implements SmartLifecycle {
 
@@ -57,16 +69,53 @@ public class OtlpHttpServer implements SmartLifecycle {
 
 	private final ExportTracesService traces;
 
+	private final HttpLimits limits;
+
+	private final Semaphore inFlight;
+
 	private HttpServer server;
 
 	private ExecutorService executor;
 
 	public OtlpHttpServer(String host, int port, long maxMessageBytes, ExportLogsService logs, ExportTracesService traces) {
+		this(host, port, maxMessageBytes, logs, traces, HttpLimits.DEFAULT);
+	}
+
+	public OtlpHttpServer(String host, int port, long maxMessageBytes, ExportLogsService logs, ExportTracesService traces,
+			HttpLimits limits) {
+		if (maxMessageBytes <= 0) {
+			throw new IllegalArgumentException("maxMessageBytes must be positive");
+		}
 		this.host = host;
 		this.port = port;
 		this.maxMessageBytes = maxMessageBytes;
 		this.logs = logs;
 		this.traces = traces;
+		this.limits = limits;
+		this.inFlight = new Semaphore(limits.maxConcurrentRequests());
+	}
+
+	/**
+	 * Sets the {@code sun.net.httpserver.*} properties from the limits, keeping any value already set. Returns
+	 * the effective values. Must run before the first {@code HttpServer.create} of the JVM to take effect.
+	 */
+	static Map<String, String> applyServerProperties(HttpLimits limits) {
+		Map<String, String> wanted = Map.of(
+				"sun.net.httpserver.maxReqTime", Long.toString(limits.readTimeout().toSeconds()),
+				"sun.net.httpserver.maxRspTime", Long.toString(limits.writeTimeout().toSeconds()),
+				"sun.net.httpserver.idleInterval", Long.toString(limits.idleTimeout().toSeconds()),
+				"sun.net.httpserver.maxIdleConnections", Integer.toString(limits.maxIdleConnections()),
+				"sun.net.httpserver.maxConnections", Integer.toString(limits.maxConnections()));
+		TreeMap<String, String> effective = new TreeMap<>();
+		wanted.forEach((key, value) -> {
+			String current = System.getProperty(key);
+			if (current == null) {
+				System.setProperty(key, value);
+				current = value;
+			}
+			effective.put(key, current);
+		});
+		return effective;
 	}
 
 	@Override
@@ -74,6 +123,7 @@ public class OtlpHttpServer implements SmartLifecycle {
 		if (server != null) {
 			return;
 		}
+		Map<String, String> effective = applyServerProperties(limits);
 		try {
 			server = HttpServer.create(new InetSocketAddress(host, port), 0);
 		}
@@ -84,7 +134,8 @@ public class OtlpHttpServer implements SmartLifecycle {
 		server.setExecutor(executor);
 		server.createContext("/", this::handle);
 		server.start();
-		log.info("OTLP/HTTP receiver listening on {}:{}", host, getPort());
+		log.info("OTLP/HTTP receiver listening on {}:{} (max concurrent requests {}, {})", host, getPort(),
+				limits.maxConcurrentRequests(), effective);
 	}
 
 	@Override
@@ -108,6 +159,25 @@ public class OtlpHttpServer implements SmartLifecycle {
 	}
 
 	private void handle(HttpExchange exchange) throws IOException {
+		if (!inFlight.tryAcquire()) {
+			try (exchange) {
+				write(exchange, OtlpHttpStatusMapper.overloaded(), responseType(exchange));
+			}
+			return;
+		}
+		try {
+			dispatch(exchange);
+		}
+		finally {
+			inFlight.release();
+		}
+	}
+
+	private static String responseType(HttpExchange exchange) {
+		return JSON.equals(mediaType(exchange.getRequestHeaders().getFirst("Content-Type"))) ? JSON : PROTOBUF;
+	}
+
+	private void dispatch(HttpExchange exchange) throws IOException {
 		try (exchange) {
 			String contentType = mediaType(exchange.getRequestHeaders().getFirst("Content-Type"));
 			String responseType = JSON.equals(contentType) ? JSON : PROTOBUF;
@@ -125,22 +195,11 @@ public class OtlpHttpServer implements SmartLifecycle {
 				write(exchange, OtlpHttpStatusMapper.methodNotAllowed(), responseType);
 				return;
 			}
-			if (!PROTOBUF.equals(contentType) && !JSON.equals(contentType)) {
-				write(exchange, OtlpHttpStatusMapper.rejected(IngestionDecision.Reason.UNSUPPORTED_ENCODING,
-						"unsupported content type; use application/x-protobuf or application/json"), responseType);
-				return;
-			}
-			String encoding = exchange.getRequestHeaders().getFirst("Content-Encoding");
-			boolean gzip = encoding != null && encoding.strip().equalsIgnoreCase("gzip");
-			if (encoding != null && !gzip && !encoding.isBlank() && !encoding.strip().equalsIgnoreCase("identity")) {
-				write(exchange, OtlpHttpStatusMapper.rejected(IngestionDecision.Reason.UNSUPPORTED_ENCODING,
-						"unsupported content encoding; use gzip or none"), responseType);
-				return;
-			}
+			// Content type and encoding are checked inside the lazy payload, after the token (401 before 415).
 			String bearer = BearerToken.extract(exchange.getRequestHeaders().getFirst("Authorization"));
 			IngestionDecision decision = signal == Signal.LOGS
-					? logs.export(bearer, payload(exchange, gzip, contentType, ExportLogsServiceRequest.newBuilder()))
-					: traces.export(bearer, payload(exchange, gzip, contentType, ExportTraceServiceRequest.newBuilder()));
+					? logs.export(bearer, payload(exchange, contentType, ExportLogsServiceRequest.newBuilder()))
+					: traces.export(bearer, payload(exchange, contentType, ExportTraceServiceRequest.newBuilder()));
 			write(exchange, OtlpHttpStatusMapper.map(decision, signal), responseType);
 		}
 		catch (RuntimeException ex) {
@@ -150,9 +209,23 @@ public class OtlpHttpServer implements SmartLifecycle {
 	}
 
 	@SuppressWarnings("unchecked")
-	private <T extends Message> OtlpPayload<T> payload(HttpExchange exchange, boolean gzip, String contentType,
+	private <T extends Message> OtlpPayload<T> payload(HttpExchange exchange, String contentType,
 			Message.Builder builder) {
 		return () -> {
+			if (!PROTOBUF.equals(contentType) && !JSON.equals(contentType)) {
+				throw new PayloadRejectedException(IngestionDecision.Reason.UNSUPPORTED_ENCODING,
+						"unsupported content type; use application/x-protobuf or application/json");
+			}
+			String encoding = exchange.getRequestHeaders().getFirst("Content-Encoding");
+			boolean gzip = encoding != null && encoding.strip().equalsIgnoreCase("gzip");
+			if (encoding != null && !gzip && !encoding.isBlank() && !encoding.strip().equalsIgnoreCase("identity")) {
+				throw new PayloadRejectedException(IngestionDecision.Reason.UNSUPPORTED_ENCODING,
+						"unsupported content encoding; use gzip or none");
+			}
+			if (!gzip && declaredLength(exchange) > maxMessageBytes) {
+				throw new PayloadRejectedException(IngestionDecision.Reason.TOO_LARGE,
+						"body exceeds the limit of " + maxMessageBytes + " bytes");
+			}
 			byte[] body = readBody(exchange.getRequestBody(), gzip);
 			try {
 				if (JSON.equals(contentType)) {
@@ -168,6 +241,19 @@ public class OtlpHttpServer implements SmartLifecycle {
 						"body is not a valid OTLP " + (JSON.equals(contentType) ? "JSON" : "protobuf") + " export request");
 			}
 		};
+	}
+
+	private static long declaredLength(HttpExchange exchange) {
+		String value = exchange.getRequestHeaders().getFirst("Content-Length");
+		if (value == null) {
+			return -1;
+		}
+		try {
+			return Long.parseLong(value.strip());
+		}
+		catch (NumberFormatException ex) {
+			return -1;
+		}
 	}
 
 	private byte[] readBody(InputStream raw, boolean gzip) throws PayloadRejectedException {

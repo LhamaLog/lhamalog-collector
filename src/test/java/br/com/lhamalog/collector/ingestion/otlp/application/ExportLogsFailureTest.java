@@ -5,13 +5,20 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import br.com.lhamalog.collector.ingestion.otlp.auth.TokenValidationResult;
 import br.com.lhamalog.collector.ingestion.otlp.domain.IngestionDecision;
+import br.com.lhamalog.collector.ingestion.otlp.domain.Scoped;
+import br.com.lhamalog.collector.ingestion.otlp.domain.TimestampWindow;
 import br.com.lhamalog.collector.ingestion.otlp.sink.LogsSink;
+import br.com.lhamalog.collector.ingestion.otlp.sink.SinkRejectedException;
 import br.com.lhamalog.collector.ingestion.otlp.sink.SinkUnavailableException;
 import com.google.protobuf.ByteString;
 import io.opentelemetry.proto.collector.logs.v1.ExportLogsServiceRequest;
 import io.opentelemetry.proto.logs.v1.LogRecord;
 import io.opentelemetry.proto.logs.v1.ResourceLogs;
 import io.opentelemetry.proto.logs.v1.ScopeLogs;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -29,7 +36,7 @@ class ExportLogsFailureTest {
 
 	private final LogsSink recordingSink = (tenant, product, records) -> {
 		sinkCalled = true;
-		delivered.addAll(records);
+		records.forEach(scoped -> delivered.add(scoped.record()));
 	};
 
 	private static ExportLogsServiceRequest batch(LogRecord... records) {
@@ -118,6 +125,70 @@ class ExportLogsFailureTest {
 		IngestionDecision decision = service(VALID_TOKEN, sink).export("x", () -> batch(VALID));
 		assertThat(decision).isEqualTo(new IngestionDecision.Accepted(1));
 		assertThat(ids).containsExactly("tenant-1", "product-a");
+	}
+
+	// T040, FR-019/FR-020
+
+	private static final Instant NOW = Instant.parse("2026-11-01T12:00:00Z");
+
+	private static long nanos(Instant instant) {
+		return instant.getEpochSecond() * 1_000_000_000L + instant.getNano();
+	}
+
+	private static ExportLogsService windowed(LogsSink sink) {
+		return new ExportLogsService(token -> VALID_TOKEN, sink, TimestampWindow.DEFAULT,
+				Clock.fixed(NOW, ZoneOffset.UTC));
+	}
+
+	@Test
+	void recordsOutsideTheTimestampWindowAreRejectedPerRecord() {
+		LogRecord recent = LogRecord.newBuilder().setTimeUnixNano(nanos(NOW.minus(Duration.ofMinutes(5)))).build();
+		LogRecord tooOld = LogRecord.newBuilder().setTimeUnixNano(nanos(NOW.minus(Duration.ofHours(6)))).build();
+		LogRecord tooNew = LogRecord.newBuilder().setTimeUnixNano(nanos(NOW.plus(Duration.ofHours(2)))).build();
+		IngestionDecision decision = windowed(recordingSink).export("x", () -> batch(recent, tooOld, tooNew));
+		assertThat(decision).isInstanceOfSatisfying(IngestionDecision.PartiallyAccepted.class, p -> {
+			assertThat(p.acceptedCount()).isEqualTo(1);
+			assertThat(p.rejectedCount()).isEqualTo(2);
+			assertThat(p.errorMessage()).contains("outside the accepted window");
+		});
+		assertThat(delivered).containsExactly(recent);
+	}
+
+	@Test
+	void oldTimeIsJudgedEvenWhenObservedTimeIsRecent() {
+		LogRecord old = LogRecord.newBuilder()
+			.setTimeUnixNano(nanos(NOW.minus(Duration.ofHours(6))))
+			.setObservedTimeUnixNano(nanos(NOW))
+			.build();
+		IngestionDecision decision = windowed(recordingSink).export("x", () -> batch(old));
+		assertThat(decision).isInstanceOfSatisfying(IngestionDecision.InvalidPayload.class,
+				p -> assertThat(p.reason()).isEqualTo(IngestionDecision.Reason.ALL_RECORDS_INVALID));
+		assertThat(sinkCalled).isFalse();
+	}
+
+	@Test
+	void destinationRefusingTheWholeBatchIsNonRetryableInvalidPayload() {
+		LogsSink refusing = (tenant, product, records) -> {
+			throw new SinkRejectedException(records.size(), 0, "HTTP 400");
+		};
+		IngestionDecision decision = service(VALID_TOKEN, refusing).export("x", () -> batch(VALID, VALID));
+		assertThat(decision).isInstanceOfSatisfying(IngestionDecision.InvalidPayload.class, p -> {
+			assertThat(p.reason()).isEqualTo(IngestionDecision.Reason.REJECTED_BY_DESTINATION);
+			assertThat(p.message()).contains("refused by the destination").doesNotContain("HTTP 400");
+		});
+	}
+
+	@Test
+	void destinationRefusingSomeRecordsIsPartialSuccessAddingAssessmentRejections() {
+		LogsSink partly = (tenant, product, records) -> {
+			throw new SinkRejectedException(1, records.size() - 1, "1 failed");
+		};
+		IngestionDecision decision = service(VALID_TOKEN, partly).export("x", () -> batch(VALID, VALID, INVALID));
+		assertThat(decision).isInstanceOfSatisfying(IngestionDecision.PartiallyAccepted.class, p -> {
+			assertThat(p.acceptedCount()).isEqualTo(1);
+			assertThat(p.rejectedCount()).isEqualTo(2);
+			assertThat(p.errorMessage()).contains("refused by the destination");
+		});
 	}
 
 }

@@ -30,14 +30,28 @@ na spec OTLP.
 | Aceite total ou lote vazio | 200 | `ExportLogsServiceResponse` ou `ExportTraceServiceResponse`, sem `partial_success` | |
 | Aceite parcial | 200 | o mesmo, com `partial_success.rejected_log_records` ou `rejected_spans`, e `error_message` | |
 | Não autorizado | 401 | `google.rpc.Status` | `WWW-Authenticate: Bearer` |
-| Lote ou registro irrecuperável | 400 | `google.rpc.Status` | |
-| Acima do limite (padrão 64 MiB já descomprimido) | 413 | `google.rpc.Status` | |
-| Destino ou catálogo de tokens fora | 503 | `google.rpc.Status` | `Retry-After` em segundos |
+| Lote ou registro irrecuperável, ou todos recusados pelo OpenObserve como dado inválido | 400 | `google.rpc.Status` | |
+| Acima do limite (padrão 64 MiB já descomprimido, ou `Content-Length` declarado acima dele) | 413 | `google.rpc.Status` | |
+| `Content-Type` ou `Content-Encoding` não suportado | 415 | `google.rpc.Status` | |
+| Destino (5xx, timeout, conexão) ou catálogo de tokens fora, ou servidor HTTP no limite de requisições simultâneas | 503 | `google.rpc.Status` | `Retry-After` em segundos (`1` quando no limite) |
 | Outro caminho, inclusive `/v1/metrics` | 404 | `google.rpc.Status` | |
 | Método diferente de POST | 405 | `google.rpc.Status` | `Allow: POST` |
 
-O `Content-Type` da resposta repete o da requisição. 401, 400 e 413 não são
+O `Content-Type` da resposta repete o da requisição. 401, 400, 413 e 415 não são
 para retry. 503 é.
+
+Ordem das checagens: método e caminho, depois token (401), e só então
+`Content-Type`, `Content-Encoding` e tamanho (415/413). Sem token válido a
+resposta é sempre 401, mesmo com content type inválido.
+
+Registro com horário fora da janela (mais antigo que 4h50 ou mais de 1 h no
+futuro, por padrão; no log vale `timeUnixNano`, senão `observedTimeUnixNano`)
+é rejeitado e contado em `partial_success`; se todos estiverem fora, 400.
+
+Se o OpenObserve recusar dados (HTTP 400/413/415/422, ou 200 com `failed` > 0 e
+`successful + failed` igual ao enviado), a resposta é 400 quando nada foi
+aceito, ou 200 com `partial_success` somando os recusados. Nunca 503: reenviar
+o mesmo lote não resolve.
 
 No aceite parcial de logs, só os logs válidos estão no stream OpenObserve
 `logs`, com `productId` do token e `tenantId` do produto. No de traces, só os spans válidos estão no
@@ -45,8 +59,9 @@ stream OpenObserve de traces (padrão `traces`), também com `productId` do
 token e `tenantId` do produto. Nenhum valor do lote substitui esses dois
 campos.
 
-O collector confirma o lote de logs ou de traces só quando o OpenObserve responde HTTP 200,
-`failed` é zero e `successful` é igual à quantidade enviada. Credencial e URL
+O collector confirma o lote de logs ou de traces como aceito total só quando o OpenObserve responde HTTP 200,
+`failed` é zero e `successful` é igual à quantidade enviada. Qualquer resposta
+que não seja nem isso nem uma recusa de dado (acima) é destino indisponível. Credencial e URL
 do OpenObserve não fazem parte deste contrato público: ficam em variável de
 ambiente.
 

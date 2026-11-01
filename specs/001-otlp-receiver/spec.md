@@ -80,6 +80,11 @@ O produto envia traces (o rastro de uma operação) no padrão OTLP, pelos mesmo
 - Envio acima do tamanho máximo configurado para o canal: rejeição do envio inteiro, sem entrega parcial.
 - Lote vazio bem formado, com token válido: sucesso de zero registros.
 - HTTP e gRPC, para a mesma situação, produzem a mesma classe de resultado e a mesma decisão do que é aceito.
+- Registro com horário fora da janela aceita pelo destino (mais antigo que o limite ou muito no futuro): rejeitado e contado no aceite parcial, sem ir ao destino. Log sem horário usa o horário observado; sem os dois, a hora de recebimento.
+- Destino recusa parte ou todo o lote como dado inválido (não como falha própria): é dado inválido, não destino indisponível, e o remetente não deve repetir o mesmo lote.
+- Token errado repetido em sequência: a recusa fica em cache por pouco tempo, sem ir ao banco a cada envio; falha do banco nunca é guardada.
+- Requisição sem token e com content type ou tamanho inválido: a resposta é não autorizada; detalhes do corpo só são avaliados para quem se autenticou.
+- Muitas requisições HTTP ao mesmo tempo, acima do limite configurado: as excedentes recebem destino indisponível temporário e podem tentar de novo.
 
 ## Requirements *(mandatory)*
 
@@ -103,6 +108,15 @@ O produto envia traces (o rastro de uma operação) no padrão OTLP, pelos mesmo
 - **FR-016**: Um produto MAY ter mais de um token válido ao mesmo tempo. Cada token pertence a exatamente um produto.
 - **FR-017**: Um token revogado MUST continuar registrado como revogado, com o momento da revogação, e MUST NOT ser apagado. A remoção definitiva de um token só ocorre junto com a remoção do produto ao qual pertence. Cadastro, rotação e revogação acontecem fora do collector; o collector só consulta.
 - **FR-018**: Os registros aceitos MUST ser gravados com isolamento por tenant, como exigem a ADR_121 e a ADR_168. Cada produto pertence a exatamente um tenant. O collector MUST resolver o tenantId pelo produto do token e MUST gravar tenantId e productId em cada log e span aceito. Um tenantId ou productId presente só no lote MUST NOT substituir nenhum dos dois.
+
+- **FR-019**: Um registro cujo horário efetivo esteja fora da janela aceita pelo destino (padrão: mais de 4h50 no passado ou mais de 1 h no futuro, configurável) MUST ser rejeitado antes da entrega e contado como rejeitado na resposta, com motivo.
+- **FR-020**: Quando o destino recusa registros como dado inválido, o collector MUST responder como dado inválido (rejeição total ou aceite parcial com a quantidade recusada), e MUST NOT responder destino indisponível. Destino indisponível MUST ficar restrito a erro do servidor de destino, timeout, falha de conexão ou resposta não confirmada.
+- **FR-021**: Cada log e span gravado MUST preservar o contexto OTLP: nome do serviço, atributos do resource, nome e versão do escopo; logs MUST levar também texto da severidade, horário observado e flags; spans MUST levar também trace state, kind, status, eventos e links. O mapeamento de nomes de campo MUST ser documentado.
+- **FR-022**: Um token recusado MUST poder ficar em um cache negativo separado, menor e mais curto que o de tokens válidos. Falha do banco de tokens MUST NOT ser guardada em cache.
+- **FR-023**: O horário efetivo de um log MUST ser o horário do evento; se ausente, o horário observado; se os dois faltarem, o instante de recebimento.
+- **FR-024**: No HTTP, a autenticação MUST ser avaliada antes de content type, encoding e tamanho declarado: sem token válido a resposta é sempre não autorizada.
+- **FR-025**: O tamanho máximo de mensagem MUST ser maior que zero e caber em um inteiro de 32 bits; caso contrário, o serviço MUST NOT subir.
+- **FR-026**: O servidor HTTP MUST limitar requisições simultâneas, conexões e tempos de leitura, escrita e ociosidade, respondendo destino indisponível temporário quando no limite. A documentação MUST recomendar um proxy reverso na frente dele. O ambiente local MUST exigir senhas do MongoDB definidas no `.env`, sem valor padrão no repositório.
 
 ### Key Entities *(include if feature involves data)*
 
