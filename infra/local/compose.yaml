@@ -32,13 +32,16 @@ services:
     image: redis:8.2.10
     container_name: lhamalog-collector-redis
     restart: unless-stopped
-    command: ["redis-server", "--appendonly", "yes"]
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?defina REDIS_PASSWORD em infra/local/.env}"]
     ports:
       - "${REDIS_PORT:-6379}:6379"
     volumes:
       - redis-data:/data
+    environment:
+      # redis-cli le a senha desta variavel no healthcheck, sem expor em argumento.
+      REDISCLI_AUTH: ${REDIS_PASSWORD:?defina REDIS_PASSWORD em infra/local/.env}
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
       interval: 10s
       timeout: 5s
       retries: 10

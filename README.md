@@ -154,7 +154,7 @@ No local as portas são 4328/4327 porque 4318/4317 já são do OpenTelemetry Col
 
 **Servidor HTTP:** o OTLP/HTTP usa o servidor HTTP do JDK, com limites: até 200 requisições simultâneas (`OTLP_RECEIVER_HTTP_MAX_CONCURRENT_REQUESTS`; acima disso, 503 + `Retry-After: 1`), 1000 conexões (`OTLP_RECEIVER_HTTP_MAX_CONNECTIONS`), 30 s para ler a requisição e escrever a resposta (`OTLP_RECEIVER_HTTP_READ_TIMEOUT` / `OTLP_RECEIVER_HTTP_WRITE_TIMEOUT`), 30 s de conexão ociosa (`OTLP_RECEIVER_HTTP_IDLE_TIMEOUT`) e 200 conexões ociosas (`OTLP_RECEIVER_HTTP_MAX_IDLE_CONNECTIONS`). Esses tempos viram propriedades `sun.net.httpserver.*`, que valem para a JVM inteira; um `-Dsun.net.httpserver...` passado na linha de comando tem prioridade. Em produção, **coloque um proxy reverso** (nginx, Traefik ou o balanceador da nuvem) na frente da porta 4318, com TLS, limite de corpo e de taxa; o servidor do JDK não deve ficar exposto direto na internet. `OTLP_RECEIVER_MAX_MESSAGE_SIZE` precisa ser maior que 0 e no máximo 2147483647 bytes, senão o serviço não sobe.
 
-O **Redis** continua no projeto como fila de mensagens da Varredura; não é destino do collector.
+**Redis Stream (LLT-182):** depois que o lote passa pela autenticação, pela validação e é gravado no OpenObserve, cada log aceito é publicado no stream `lhamalog:stream:logs` (evento `log.ingested`, `XADD` com `MAXLEN ~`, padrão 100000 via `LHAMALOG_MESSAGING_STREAM_LOGS_MAX_LEN`) para a Varredura. Log sem token válido ou inválido nunca chega ao stream. Se o Redis falhar, a resposta é 503 + `Retry-After: 5` (repetível; entrega pelo menos uma vez, a Varredura deduplica por `idempotencyId`). Contrato em `specs/002-tenant-product-logs/contracts/log-ingested-stream.md`. No ambiente local o Redis exige senha: defina `REDIS_PASSWORD` em `infra/local/.env`.
 
 ## Log de inicialização
 
@@ -197,7 +197,9 @@ No Linux/macOS: `OTLP_ENABLED=false make run-local`.
 | `MONGODB_URI` | sim | `mongodb://usuario:senha@host:27017/lhamalog_collector?authSource=lhamalog_collector` |
 | `REDIS_HOST` | sim | host do Redis |
 | `REDIS_PORT` | não | `6379` |
-| `REDIS_USERNAME` / `REDIS_PASSWORD` | não | vazio |
+| `REDIS_USERNAME` / `REDIS_PASSWORD` | não (recomendado) | vazio |
+| `REDIS_TIMEOUT` / `REDIS_CONNECT_TIMEOUT` | não | `2s` / `2s` |
+| `LHAMALOG_MESSAGING_STREAM_LOGS_MAX_LEN` | não | `100000` |
 | `REDIS_SSL_ENABLED` | não | `false` |
 | `OPENOBSERVE_URL` | sim | `https://openobserve:5080` |
 | `OPENOBSERVE_USERNAME` / `OPENOBSERVE_PASSWORD` | sim | credencial de ingestão do OpenObserve |
