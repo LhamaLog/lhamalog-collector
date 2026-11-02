@@ -5,7 +5,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import br.com.lhamalog.collector.ingestion.otlp.auth.TokenValidationResult;
 import br.com.lhamalog.collector.ingestion.otlp.domain.IngestionDecision;
-import br.com.lhamalog.collector.ingestion.otlp.sink.LogsSink;
+import br.com.lhamalog.collector.ingestion.otlp.sink.BatchStore;
+import br.com.lhamalog.collector.ingestion.otlp.sink.Signal;
+import br.com.lhamalog.collector.ingestion.otlp.sink.StoredBatch;
 import br.com.lhamalog.collector.ingestion.otlp.sink.PublishingLogsSink;
 import br.com.lhamalog.collector.ingestion.otlp.sink.SinkRejectedException;
 import br.com.lhamalog.collector.ingestion.otlp.sink.SinkUnavailableException;
@@ -32,10 +34,16 @@ class PublishingLogsSinkTest {
 
 	private final List<LogRecord> published = new ArrayList<>();
 
-	private final LogsSink storing = (tenant, product, records) -> calls.add("store");
+	private static final StoredBatch STORED = new StoredBatch(Signal.LOGS, "lhamalog", "logs", "batch-1",
+			List.of("record-1"), 1L, 1L, "2026-11-01T12:00:00Z");
 
-	private final PublishingLogsSink.Publisher recording = (tenant, product, records) -> {
-		calls.add("publish:" + tenant + "/" + product);
+	private final BatchStore<LogRecord> storing = (tenant, product, records) -> {
+		calls.add("store");
+		return STORED;
+	};
+
+	private final PublishingLogsSink.Publisher recording = (tenant, product, batch, records) -> {
+		calls.add("publish:" + tenant + "/" + product + "/" + batch.batchId());
 		records.forEach(scoped -> published.add(scoped.record()));
 	};
 
@@ -45,7 +53,7 @@ class PublishingLogsSinkTest {
 			.build();
 	}
 
-	private static IngestionDecision export(TokenValidationResult auth, LogsSink sink, ExportLogsServiceRequest request) {
+	private static IngestionDecision export(TokenValidationResult auth, PublishingLogsSink sink, ExportLogsServiceRequest request) {
 		return new ExportLogsService(token -> auth, sink).export("x", () -> request);
 	}
 
@@ -53,7 +61,7 @@ class PublishingLogsSinkTest {
 	void storesThenPublishesOnlyValidRecordsWithTokenIds() {
 		IngestionDecision decision = export(VALID_TOKEN, new PublishingLogsSink(storing, recording), batch(VALID, INVALID));
 		assertThat(decision).isInstanceOf(IngestionDecision.PartiallyAccepted.class);
-		assertThat(calls).containsExactly("store", "publish:tenant-1/product-a");
+		assertThat(calls).containsExactly("store", "publish:tenant-1/product-a/batch-1");
 		assertThat(published).containsExactly(VALID);
 	}
 
@@ -74,10 +82,10 @@ class PublishingLogsSinkTest {
 
 	@Test
 	void openObserveFailureOrRejectionDoesNotPublish() {
-		LogsSink down = (tenant, product, records) -> {
+		BatchStore<LogRecord> down = (tenant, product, records) -> {
 			throw new SinkUnavailableException("down", 7, null);
 		};
-		LogsSink refusing = (tenant, product, records) -> {
+		BatchStore<LogRecord> refusing = (tenant, product, records) -> {
 			throw new SinkRejectedException(1, 0, "refused");
 		};
 		assertThat(export(VALID_TOKEN, new PublishingLogsSink(down, recording), batch(VALID)))
@@ -88,7 +96,7 @@ class PublishingLogsSinkTest {
 
 	@Test
 	void redisFailureIsRetryableDestinationUnavailable() {
-		PublishingLogsSink.Publisher failing = (tenant, product, records) -> {
+		PublishingLogsSink.Publisher failing = (tenant, product, batch, records) -> {
 			throw new MessagePublishException("redis down", null);
 		};
 		IngestionDecision decision = export(VALID_TOKEN, new PublishingLogsSink(storing, failing), batch(VALID));

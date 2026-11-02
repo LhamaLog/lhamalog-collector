@@ -79,3 +79,36 @@
 - Integração com Redis real por Testcontainers (`StreamPublisherRedisTest`): campos, MAXLEN ~, Redis fora.
 - Aceitação (`ExportLogsAcceptanceTest`): stream com tenant/produto do token e contexto OTel preservado;
   token recusado e lote inválido sem entrada no stream. Imagem `redis:8.2.10`, a mesma do compose.
+
+## D9. Referência em vez do log completo (2026-11-02, Michel)
+
+- O OpenObserve é a fonte do conteúdo; o stream leva só a referência. O Finder carrega o conteúdo pela
+  referência e a Varredura organiza por prioridade, criticidade, tenant e dados OTel.
+- A ingestão `_json` não devolve id por registro; a busca `POST /api/{org}/_search` exige `start_time` e
+  `end_time` em microssegundos (https://openobserve.ai/docs/reference/api/search/search/). Por isso cada
+  documento ganha `lhamalog_batch_id` e `lhamalog_record_id`, e a referência leva a faixa de `_timestamp`.
+- Uma referência por lote; lote de um registro leva `recordId` e aponta direto para ele.
+- `lhamalog_record_id` é o antigo `idempotencyId` por log (D5). O `batchId` é UUID v3 sobre o sinal e os ids
+  dos registros, e é o `idempotencyId` do evento: o reenvio do cliente gera o mesmo id.
+- Trade-off: o reenvio após 503 regrava o OpenObserve com os mesmos ids; o Finder deve deduplicar por
+  `lhamalog_record_id`.
+
+## D10. Nomes de evento e streams
+
+- Primeiro consumo (collector): `log.ingested` (mantém o nome; `schemaVersion` sobe para 2 por mudança
+  incompatível do corpo) e `trace.ingested` (versão 1). O sinal no nome deixa o tipo claro sem ler o corpo.
+- Depois da Varredura (varredura de dados sensíveis e validação de prompt-injection): `log.checked` e
+  `trace.checked`, publicados fora do collector; só documentado aqui.
+- **Dois streams**: `lhamalog:stream:logs` e `lhamalog:stream:traces`. Segue a regra
+  `lhamalog:stream:<domínio>` do ADR; consumidores, `MAXLEN` (`LHAMALOG_MESSAGING_STREAM_TRACES_MAX_LEN`) e
+  vazão independentes, e um pico de traces não atrasa logs.
+
+## D11. Prioridade e criticidade
+
+Só pela severidade (Michel). `severityNumber` 21-24 FATAL/CRITICAL, 17-20 ERROR/HIGH, 13-16 WARN/MEDIUM,
+9-12 INFO/LOW, 5-8 DEBUG/LOW, 1-4 TRACE/LOW; 0 usa o prefixo de `severityText`; sem nada, UNSPECIFIED/LOW.
+O lote recebe o máximo e `severityCounts` por nível. Spans não têm severidade: UNSPECIFIED/LOW.
+
+## D12. Bytes
+
+`bytes` é a soma do tamanho protobuf serializado dos registros aceitos (sem resource e scope).

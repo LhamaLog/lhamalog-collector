@@ -1,20 +1,24 @@
 # Data Model: Associar logs ao tenant e ao produto (LLT-182)
 
-## Documento no OpenObserve (sem mudança)
+## Documento no OpenObserve
 
-Continua como em `specs/001-otlp-receiver/data-model.md`: `tenantId` e `productId` do token no topo,
-`attributes` e `resourceAttributes` em JSON, `serviceName`, `scopeName`, `scopeVersion`.
-
-## Entrada do stream `lhamalog:stream:logs`
-
-Uma entrada por log aceito. Campos (todos texto):
+Como em `specs/001-otlp-receiver/data-model.md` (logs e traces), mais dois campos (2026-11-02):
 
 | Campo | Valor |
 |---|---|
-| `idempotencyId` | UUID v3 determinístico (research D5) |
-| `event` | `log.ingested` |
+| `lhamalog_batch_id` | UUID v3 do lote (igual em todos os documentos do lote) |
+| `lhamalog_record_id` | UUID v3 do registro (research D5) |
+
+## Entrada dos streams `lhamalog:stream:logs` e `lhamalog:stream:traces`
+
+Uma entrada por lote aceito. Campos (todos texto):
+
+| Campo | Valor |
+|---|---|
+| `idempotencyId` | `batchId` (research D9) |
+| `event` | `log.ingested` ou `trace.ingested` |
 | `origin` | `collector` |
-| `schemaVersion` | `1` |
+| `schemaVersion` | `2` (logs) / `1` (traces) |
 | `publishedAt` | instante ISO-8601 UTC, ex. `2026-11-01T15:00:00Z` |
 | `metadata` | JSON, ver abaixo |
 | `body` | JSON, ver abaixo |
@@ -26,31 +30,29 @@ Uma entrada por log aceito. Campos (todos texto):
 | `tenantId` | sim | token; só aparece aqui |
 | `productId` | sim | token |
 | `correlationId` | sim | UUID por chamada de exportação |
-| `traceId` | quando o log tem | hex de 32 caracteres |
+| `traceId` | quando o lote tem um só trace | hex de 32 caracteres |
 
-### body (`LogIngestedBody`, versão 1)
+### body (`TelemetryIngestedBody`)
 
 | Campo | Tipo | Observação |
 |---|---|---|
+| `signal` | `LOGS` / `TRACES` | |
+| `productId` | texto | do token |
+| `openobserve.organization` / `.stream` | texto | onde buscar |
+| `openobserve.batchId` | UUID | `lhamalog_batch_id` |
+| `openobserve.recordId` | UUID ou null | só em lote de um registro |
+| `openobserve.minTimestampMicros` / `.maxTimestampMicros` | número | faixa de `_timestamp` |
+| `serviceNames` | lista | `service.name` distintos, ordenados |
+| `priority` / `criticality` | texto | só pela severidade, máximo do lote (research D11) |
+| `maxSeverityNumber` | número | |
+| `severityCounts` | objeto | contagem por criticidade |
+| `recordCount` | número | |
+| `bytes` | número | research D12 |
 | `receivedAt` | texto ISO | instante do aceite |
-| `timeUnixNano` | texto decimal ou null | sem sinal |
-| `observedTimeUnixNano` | texto decimal ou null | |
-| `severityNumber` | número | |
-| `severityText` | texto ou null | |
-| `body` | texto ou null | não-string vira JSON em texto |
-| `attributes` | objeto | atributos do log como vieram |
-| `traceId` / `spanId` | hex ou null | |
-| `flags` | número | |
-| `resource.serviceName` | texto ou null | de `service.name` |
-| `resource.attributes` | objeto | atributos do recurso como vieram |
-| `scope.name` / `scope.version` | texto ou null | |
-| `scope.attributes` | objeto | |
 
-Valores de atributo: string, booleano, inteiro, decimal, bytes em Base64, listas e mapas aninhados.
-Atributos chamados `tenantId`/`productId` vindos do lote ficam dentro de `attributes`, sem efeito na
-identidade.
+Não há corpo, atributos, resource nem scope do registro.
 
 ## Limite do stream
 
-`MAXLEN ~ N`, N = `LHAMALOG_MESSAGING_STREAM_LOGS_MAX_LEN` ou 100000. Valor não numérico ou menor que 1
+`MAXLEN ~ N`, N = `LHAMALOG_MESSAGING_STREAM_LOGS_MAX_LEN` / `..._TRACES_MAX_LEN` ou 100000. Valor não numérico ou menor que 1
 impede a subida.

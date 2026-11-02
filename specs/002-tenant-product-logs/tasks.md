@@ -66,6 +66,15 @@ Código em `src/main/java/br/com/lhamalog/collector/`. Testes em `src/test/java/
 - [x] T021 [P] `README.md`: Redis como fila de logs aceitos e `REDIS_PASSWORD` obrigatório no compose
 - [x] T022 Rodar `.\mvnw.cmd clean verify` e o roteiro de `quickstart.md`
 
+## Phase 8: Referência ao OpenObserve (revisão 2026-11-02)
+
+- [x] T023 Specs: spec FR-003/004/011/012, research D9-D12, data-model, contrato `log-ingested-stream.md`
+- [x] T024 `RecordIds`, `StoredBatch`, `BatchStore`, `Signal`: `OpenObserveLogsSink`/`OpenObserveTracesSink` gravam `lhamalog_batch_id` e `lhamalog_record_id` e devolvem a faixa de `_timestamp`
+- [x] T025 `Criticality` (só severidade) e `TelemetryIngestedBody`; `LogIngestedBody` removido
+- [x] T026 `TelemetryIngestedPublisher`, `LogIngestedPublisher` (v2) e `TraceIngestedPublisher` (`lhamalog:stream:traces`); `PublishingTracesSink` e beans
+- [x] T027 Testes: `TelemetryIngestedPublisherTest`, `OpenObserveSinkTest`, `PublishingLogsSinkTest`, aceite de logs e traces (referência localiza o lote; sem conteúdo)
+- [x] T028 Rodar `.\mvnw.cmd test`
+
 ## Dependencies
 
 Phase 1 e 2 antes das histórias. US1 antes de US2 (o publicador existe). US3 e US4 dependem do

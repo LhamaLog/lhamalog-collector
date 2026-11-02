@@ -9,6 +9,9 @@
 **Input**: Jira LLT-182 "Associar logs ao tenant e ao produto" (Épico Coletor, E05.F1.2, prioridade Highest),
 com escopo ampliado: publicar os logs aceitos numa fila para a Varredura.
 
+**Revisão 2026-11-02**: a fila leva só uma **referência** ao lote no OpenObserve (fonte do conteúdo), para
+logs e traces. Decisões em research.md D9-D12.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Todo log recebido pertence a um tenant e a um produto (Priority: P1)
@@ -36,8 +39,8 @@ destino e a fila.
 
 ### User Story 2 - Logs aceitos vão para a fila da Varredura (Priority: P1)
 
-Depois de autenticado, validado e guardado, cada log aceito vira um evento `log.ingested` na fila da
-Varredura, no envelope padrão de mensageria da LhamaLog.
+Depois de autenticado, validado e guardado, cada lote aceito vira um evento `log.ingested` (ou
+`trace.ingested`) com a referência ao OpenObserve, na fila da Varredura, no envelope padrão de mensageria da LhamaLog.
 
 **Why this priority**: a Varredura depende desse evento para analisar os logs; é o escopo novo da história.
 
@@ -45,12 +48,12 @@ Varredura, no envelope padrão de mensageria da LhamaLog.
 
 **Acceptance Scenarios**:
 
-1. **Given** um lote válido, **When** o collector confirma o recebimento, **Then** existe um evento por log
+1. **Given** um lote válido, **When** o collector confirma o recebimento, **Then** existe um evento por lote
    aceito, com identificador de idempotência, nome do evento, origem, versão de esquema e instante de
    publicação.
 2. **Given** um lote misto, **When** é aceito parcialmente, **Then** só os logs válidos vão para a fila.
-3. **Given** o mesmo lote reenviado pelo cliente, **When** é aceito de novo, **Then** cada log tem o mesmo
-   identificador de idempotência da primeira vez.
+3. **Given** o mesmo lote reenviado pelo cliente, **When** é aceito de novo, **Then** o lote e cada registro têm os
+   mesmos identificadores da primeira vez.
 
 ---
 
@@ -95,10 +98,14 @@ Varredura, no envelope padrão de mensageria da LhamaLog.
 - **FR-001**: Todo log aceito MUST levar `tenantId` e `productId` vindos do token validado.
 - **FR-002**: Dados do lote MUST NOT alterar `tenantId` nem `productId`.
 - **FR-003**: Atributos de recurso, `service.name`, escopo (nome, versão, atributos) e atributos do log MUST
-  ser preservados no armazenamento e na fila.
-- **FR-004**: Cada log aceito e guardado MUST ser publicado como evento `log.ingested`, origem `collector`,
-  versão de esquema 1, com `tenantId` apenas nos metadados do envelope, junto de `productId`,
-  `correlationId` e, quando houver, `traceId`.
+  ser preservados no armazenamento (OpenObserve). A fila MUST NOT levar conteúdo de log ou span.
+- **FR-004**: Cada lote aceito e guardado MUST ser publicado como uma referência: `log.ingested` (versão 2)
+  em `lhamalog:stream:logs` ou `trace.ingested` (versão 1) em `lhamalog:stream:traces`, origem `collector`,
+  com `tenantId` apenas nos metadados, junto de `productId`, `correlationId` e `traceId` quando o lote tem
+  um só trace. Campos em contracts/log-ingested-stream.md.
+- **FR-011**: Cada documento no OpenObserve MUST ter `lhamalog_batch_id` e `lhamalog_record_id`; a referência
+  leva organização, stream, `batchId`, faixa de `_timestamp` e, em lote de um registro, `recordId`.
+- **FR-012**: Prioridade e criticidade MUST vir só da severidade (máximo do lote).
 - **FR-005**: A publicação MUST acontecer só depois da autenticação, da validação e da confirmação do
   armazenamento.
 - **FR-006**: Lotes não autorizados, inválidos ou não confirmados pelo armazenamento MUST NOT gerar eventos.
@@ -110,8 +117,10 @@ Varredura, no envelope padrão de mensageria da LhamaLog.
 
 ### Key Entities
 
-- **Evento log.ingested**: envelope com identificador de idempotência, nome, origem, versão, instante de
-  publicação, metadados (dono e correlação) e corpo (o log OTel).
+- **Evento log.ingested / trace.ingested**: envelope com identificador de idempotência (o `batchId`), nome,
+  origem, versão, instante de publicação, metadados (dono e correlação) e corpo (a referência ao lote).
+- **Evento log.checked / trace.checked**: publicado pela Varredura (fora do collector) depois da varredura de
+  dados sensíveis e da validação de prompt-injection.
 - **Fila de logs**: sequência ordenada e limitada de eventos consumida pela Varredura.
 
 ## Success Criteria *(mandatory)*
@@ -120,12 +129,12 @@ Varredura, no envelope padrão de mensageria da LhamaLog.
 
 - **SC-001**: 100% dos logs aceitos nos testes têm `tenantId` e `productId` iguais aos do token.
 - **SC-002**: 0 eventos na fila para lotes não autorizados ou inválidos nos testes.
-- **SC-003**: 100% dos atributos de recurso, escopo e log enviados nos testes aparecem no evento.
+- **SC-003**: 100% das referências localizam o lote no OpenObserve; 0 conteúdo de log/span na fila.
 - **SC-004**: Com a fila fora do ar, 0 respostas de sucesso; todas pedem nova tentativa.
 
 ## Assumptions
 
 - O formato do envelope segue o rascunho de ADR de mensageria com Redis Streams (status Proposta).
 - Só o lado que publica faz parte desta feature; o consumo e a deduplicação são da Varredura.
-- Traces não são publicados nesta feature.
+- Traces também são publicados como referência (revisão 2026-11-02).
 - O armazenamento (OpenObserve) continua sendo gravado antes da fila.

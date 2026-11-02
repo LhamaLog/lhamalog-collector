@@ -41,8 +41,8 @@ import tools.jackson.databind.json.JsonMapper;
 
 /**
  * User story 1 end to end: MongoDB, OpenObserve and Redis in Testcontainers, receiver on free ports (T015).
- * LLT-182: every accepted log also lands in {@code lhamalog:stream:logs} with the token identity in the
- * envelope metadata, and refused or invalid logs never reach the stream.
+ * LLT-182: every accepted batch gets one reference in {@code lhamalog:stream:logs} with the token identity in
+ * the envelope metadata and no log content, and refused or invalid logs never reach the stream.
  */
 @SpringBootTest
 @Import(TestcontainersConfiguration.class)
@@ -65,13 +65,24 @@ class ExportLogsAcceptanceTest {
 
 	private static final JsonMapper JSON = JsonMapper.builder().build();
 
-	/** Stream entries whose log body is the marker, parsed as {metadata, body}. */
-	private List<JsonNode[]> streamEntries(String marker) {
+	/** Stream entries that reference the batch id, parsed as {metadata, body}. */
+	private List<JsonNode[]> streamEntries(String batchId) {
 		List<MapRecord<String, Object, Object>> entries = redis.opsForStream().range("lhamalog:stream:logs", Range.unbounded());
 		return entries.stream()
 			.map(entry -> new JsonNode[] { JSON.readTree((String) entry.getValue().get("metadata")),
 					JSON.readTree((String) entry.getValue().get("body")) })
-			.filter(pair -> marker.equals(pair[1].path("body").asString(null)))
+			.filter(pair -> batchId.equals(pair[1].path("openobserve").path("batchId").asString(null)))
+			.toList();
+	}
+
+	/** Stream entries published for the product, whatever the batch. */
+	private List<JsonNode[]> entriesOfProduct(String productId) {
+		return redis.opsForStream()
+			.range("lhamalog:stream:logs", Range.unbounded())
+			.stream()
+			.map(entry -> new JsonNode[] { JSON.readTree((String) entry.getValue().get("metadata")),
+					JSON.readTree((String) entry.getValue().get("body")) })
+			.filter(pair -> productId.equals(pair[0].path("productId").asString(null)))
 			.toList();
 	}
 
@@ -106,16 +117,33 @@ class ExportLogsAcceptanceTest {
 		assertThat(text(documents.getFirst(), "tenantId")).isEqualTo(product.tenantId());
 		assertThat(text(documents.getFirst(), "severityNumber")).isEqualTo("9");
 
-		List<JsonNode[]> published = streamEntries(marker);
+		String batchId = text(documents.getFirst(), "lhamalog_batch_id");
+		String recordId = text(documents.getFirst(), "lhamalog_record_id");
+		assertThat(batchId).isNotBlank();
+		assertThat(recordId).isNotBlank();
+
+		List<JsonNode[]> published = streamEntries(batchId);
 		assertThat(published).hasSize(1);
 		JsonNode metadata = published.getFirst()[0];
 		JsonNode body = published.getFirst()[1];
 		assertThat(metadata.path("tenantId").asString()).isEqualTo(product.tenantId());
 		assertThat(metadata.path("productId").asString()).isEqualTo(product.productId());
 		assertThat(body.has("tenantId")).isFalse();
-		assertThat(body.path("resource").path("serviceName").asString()).isEqualTo("checkout");
-		assertThat(body.path("resource").path("attributes").path("tenantId").asString()).isEqualTo("other-tenant");
-		assertThat(body.path("attributes").path("productId").asString()).isEqualTo("someone-else");
+		assertThat(body.has("body")).isFalse();
+		assertThat(body.has("attributes")).isFalse();
+		assertThat(body.toString()).doesNotContain(marker).doesNotContain("other-tenant").doesNotContain("someone-else");
+		assertThat(body.path("signal").asString()).isEqualTo("LOGS");
+		assertThat(body.path("productId").asString()).isEqualTo(product.productId());
+		JsonNode ref = body.path("openobserve");
+		assertThat(ref.path("stream").asString()).isEqualTo("logs");
+		assertThat(ref.path("recordId").asString()).isEqualTo(recordId);
+		long timestamp = Long.parseLong(text(documents.getFirst(), "_timestamp"));
+		assertThat(timestamp).isBetween(ref.path("minTimestampMicros").asLong(), ref.path("maxTimestampMicros").asLong());
+		assertThat(body.path("serviceNames").get(0).asString()).isEqualTo("checkout");
+		assertThat(body.path("criticality").asString()).isEqualTo("INFO");
+		assertThat(body.path("priority").asString()).isEqualTo("LOW");
+		assertThat(body.path("recordCount").asInt()).isEqualTo(1);
+		assertThat(OtlpAcceptanceSupport.search(env, "logs", "lhamalog_batch_id", batchId)).hasSize(1);
 	}
 
 	@Test
@@ -187,7 +215,7 @@ class ExportLogsAcceptanceTest {
 		finally {
 			channel.shutdownNow();
 		}
-		assertThat(streamEntries(marker)).isEmpty();
+		assertThat(entriesOfProduct(product.productId())).isEmpty();
 	}
 
 	@Test
@@ -204,7 +232,7 @@ class ExportLogsAcceptanceTest {
 			.build();
 		assertThat(postProtobuf(httpServer.getPort(), "/v1/logs", product.token(), invalid.toByteArray()).statusCode())
 			.isEqualTo(400);
-		assertThat(streamEntries(marker)).isEmpty();
+		assertThat(entriesOfProduct(product.productId())).isEmpty();
 	}
 
 }

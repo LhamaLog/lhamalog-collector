@@ -13,6 +13,8 @@ import br.com.lhamalog.collector.ingestion.otlp.sink.OpenObserveClient;
 import br.com.lhamalog.collector.ingestion.otlp.sink.OpenObserveLogsSink;
 import br.com.lhamalog.collector.ingestion.otlp.sink.OpenObserveTracesSink;
 import br.com.lhamalog.collector.ingestion.otlp.sink.PublishingLogsSink;
+import br.com.lhamalog.collector.ingestion.otlp.sink.PublishingTracesSink;
+import br.com.lhamalog.collector.ingestion.otlp.sink.TraceIngestedPublisher;
 import br.com.lhamalog.collector.ingestion.otlp.sink.TracesSink;
 import br.com.lhamalog.collector.messaging.MessagingProperties;
 import com.github.benmanes.caffeine.cache.Ticker;
@@ -32,7 +34,8 @@ import tools.jackson.databind.json.JsonMapper;
  * the context is ready and stops them on shutdown. Each channel can be turned off with
  * {@code lhamalog.otlp.http.enabled} or {@code lhamalog.otlp.grpc.enabled}.
  *
- * <p>Accepted logs go to OpenObserve and then to the Redis Stream {@code lhamalog:stream:logs} (LLT-182).
+ * <p>Accepted logs go to OpenObserve and then to the Redis Stream {@code lhamalog:stream:logs}; accepted spans to
+ * {@code lhamalog:stream:traces}. The stream carries only a reference to OpenObserve (LLT-182).
  */
 @Configuration(proxyBeanMethods = false)
 public class OtlpReceiverConfiguration {
@@ -57,14 +60,22 @@ public class OtlpReceiverConfiguration {
 	}
 
 	@Bean
+	TraceIngestedPublisher traceIngestedPublisher(StringRedisTemplate redis, Environment environment) {
+		return new TraceIngestedPublisher(redis, JsonMapper.builder().build(),
+				new MessagingProperties(environment::getProperty), Clock.systemUTC());
+	}
+
+	@Bean
 	LogsSink logsSink(OpenObserveClient client, OtlpReceiverProperties properties, LogIngestedPublisher publisher) {
 		return PublishingLogsSink.of(
 				new OpenObserveLogsSink(client, properties.openobserve().logsStream(), Clock.systemUTC()), publisher);
 	}
 
 	@Bean
-	TracesSink tracesSink(OpenObserveClient client, OtlpReceiverProperties properties) {
-		return new OpenObserveTracesSink(client, properties.openobserve().tracesStream(), Clock.systemUTC());
+	TracesSink tracesSink(OpenObserveClient client, OtlpReceiverProperties properties,
+			TraceIngestedPublisher publisher) {
+		return PublishingTracesSink.of(
+				new OpenObserveTracesSink(client, properties.openobserve().tracesStream(), Clock.systemUTC()), publisher);
 	}
 
 	@Bean
