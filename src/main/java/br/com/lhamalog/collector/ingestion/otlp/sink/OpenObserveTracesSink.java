@@ -20,7 +20,7 @@ import java.util.Map;
  * {@code traceState} when present, {@code events} and {@code links} as JSON text, and the resource and scope
  * context. OpenObserve stores field names in lowercase; see {@code specs/001-otlp-receiver/data-model.md}.
  */
-public class OpenObserveTracesSink implements TracesSink {
+public class OpenObserveTracesSink implements TracesSink, BatchStore<Span> {
 
 	private final OpenObserveClient client;
 
@@ -36,6 +36,19 @@ public class OpenObserveTracesSink implements TracesSink {
 
 	@Override
 	public void deliver(String tenantId, String productId, List<Scoped<Span>> acceptedSpans) {
+		store(tenantId, productId, acceptedSpans);
+	}
+
+	@Override
+	public StoredBatch store(String tenantId, String productId, List<Scoped<Span>> acceptedSpans) {
+		if (acceptedSpans.isEmpty()) {
+			return StoredBatch.empty(Signal.TRACES, client.organization(), stream, clock.instant());
+		}
+		List<String> recordIds = RecordIds.of(tenantId, productId, acceptedSpans);
+		String batchId = RecordIds.batchId(Signal.TRACES, recordIds);
+		long min = Long.MAX_VALUE;
+		long max = Long.MIN_VALUE;
+		int index = 0;
 		Instant receivedAt = clock.instant();
 		long receivedMicros = OtlpValues.micros(receivedAt);
 		List<Map<String, Object>> documents = new ArrayList<>(acceptedSpans.size());
@@ -44,9 +57,14 @@ public class OpenObserveTracesSink implements TracesSink {
 			Map<String, Object> doc = new LinkedHashMap<>();
 			doc.put("tenantId", tenantId);
 			doc.put("productId", productId);
-			doc.put("_timestamp",
-					span.getStartTimeUnixNano() != 0 ? Long.divideUnsigned(span.getStartTimeUnixNano(), 1_000) : receivedMicros);
+			long timestamp = span.getStartTimeUnixNano() != 0 ? Long.divideUnsigned(span.getStartTimeUnixNano(), 1_000)
+					: receivedMicros;
+			doc.put("_timestamp", timestamp);
 			doc.put("receivedAt", receivedAt.toString());
+			doc.put(StoredBatch.BATCH_ID_FIELD, batchId);
+			doc.put(StoredBatch.RECORD_ID_FIELD, recordIds.get(index++));
+			min = Math.min(min, timestamp);
+			max = Math.max(max, timestamp);
 			doc.put("traceId", OtlpValues.hex(span.getTraceId()));
 			doc.put("spanId", OtlpValues.hex(span.getSpanId()));
 			if (!span.getParentSpanId().isEmpty()) {
@@ -73,6 +91,8 @@ public class OpenObserveTracesSink implements TracesSink {
 			documents.add(doc);
 		}
 		client.ingest(stream, documents);
+		return new StoredBatch(Signal.TRACES, client.organization(), stream, batchId, recordIds, min, max,
+				receivedAt.toString());
 	}
 
 	private static String enumName(String name, int value) {

@@ -23,7 +23,7 @@ import java.util.Map;
  * {@code resourceAttributes}, {@code scopeName}, {@code scopeVersion}). OpenObserve stores field names in
  * lowercase; see {@code specs/001-otlp-receiver/data-model.md}.
  */
-public class OpenObserveLogsSink implements LogsSink {
+public class OpenObserveLogsSink implements LogsSink, BatchStore<LogRecord> {
 
 	private final OpenObserveClient client;
 
@@ -39,6 +39,19 @@ public class OpenObserveLogsSink implements LogsSink {
 
 	@Override
 	public void deliver(String tenantId, String productId, List<Scoped<LogRecord>> acceptedRecords) {
+		store(tenantId, productId, acceptedRecords);
+	}
+
+	@Override
+	public StoredBatch store(String tenantId, String productId, List<Scoped<LogRecord>> acceptedRecords) {
+		if (acceptedRecords.isEmpty()) {
+			return StoredBatch.empty(Signal.LOGS, client.organization(), stream, clock.instant());
+		}
+		List<String> recordIds = RecordIds.of(tenantId, productId, acceptedRecords);
+		String batchId = RecordIds.batchId(Signal.LOGS, recordIds);
+		long min = Long.MAX_VALUE;
+		long max = Long.MIN_VALUE;
+		int index = 0;
 		Instant receivedAt = clock.instant();
 		long receivedMicros = OtlpValues.micros(receivedAt);
 		List<Map<String, Object>> documents = new ArrayList<>(acceptedRecords.size());
@@ -48,8 +61,13 @@ public class OpenObserveLogsSink implements LogsSink {
 			Map<String, Object> doc = new LinkedHashMap<>();
 			doc.put("tenantId", tenantId);
 			doc.put("productId", productId);
-			doc.put("_timestamp", time != 0 ? Long.divideUnsigned(time, 1_000) : receivedMicros);
+			long timestamp = time != 0 ? Long.divideUnsigned(time, 1_000) : receivedMicros;
+			doc.put("_timestamp", timestamp);
 			doc.put("receivedAt", receivedAt.toString());
+			doc.put(StoredBatch.BATCH_ID_FIELD, batchId);
+			doc.put(StoredBatch.RECORD_ID_FIELD, recordIds.get(index++));
+			min = Math.min(min, timestamp);
+			max = Math.max(max, timestamp);
 			if (!log.getTraceId().isEmpty()) {
 				doc.put("traceId", OtlpValues.hex(log.getTraceId()));
 			}
@@ -72,6 +90,8 @@ public class OpenObserveLogsSink implements LogsSink {
 			documents.add(doc);
 		}
 		client.ingest(stream, documents);
+		return new StoredBatch(Signal.LOGS, client.organization(), stream, batchId, recordIds, min, max,
+				receivedAt.toString());
 	}
 
 }

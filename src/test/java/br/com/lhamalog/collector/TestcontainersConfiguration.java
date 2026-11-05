@@ -39,11 +39,14 @@ public class TestcontainersConfiguration {
 		return new MongoDBContainer(DockerImageName.parse("mongo:latest"));
 	}
 
-	/** Redis continua no projeto como fila da Varredura; nao e destino do receptor OTLP. */
+	/**
+	 * Fila da Varredura: recebe uma referencia por lote aceito em lhamalog:stream:logs e lhamalog:stream:traces
+	 * (LLT-182); o conteudo fica no OpenObserve. Mesma tag do compose local.
+	 */
 	@Bean
 	@ServiceConnection(name = "redis")
 	GenericContainer<?> redisContainer() {
-		return new GenericContainer<>(DockerImageName.parse("redis:latest")).withExposedPorts(6379);
+		return new GenericContainer<>(DockerImageName.parse("redis:8.2.10")).withExposedPorts(6379);
 	}
 
 	@Bean

@@ -49,6 +49,8 @@ class ExportTracesAcceptanceTest {
 
 	private static final SecureRandom RANDOM = new SecureRandom();
 
+	private static final tools.jackson.databind.json.JsonMapper JSON = tools.jackson.databind.json.JsonMapper.builder().build();
+
 	@Autowired
 	MongoTemplate mongo;
 
@@ -63,6 +65,9 @@ class ExportTracesAcceptanceTest {
 
 	@Autowired
 	Environment env;
+
+	@Autowired
+	org.springframework.data.redis.core.StringRedisTemplate redis;
 
 	private static ByteString randomId(int size) {
 		byte[] bytes = new byte[size];
@@ -118,6 +123,18 @@ class ExportTracesAcceptanceTest {
 			assertThat(text(documents.getFirst(), "productId")).isEqualTo(product.productId());
 			assertThat(text(documents.getFirst(), "tenantId")).isEqualTo(product.tenantId());
 			assertThat(text(documents.getFirst(), "parentSpanId")).hasSize(16);
+			String batchId = text(documents.getFirst(), "lhamalog_batch_id");
+			List<tools.jackson.databind.JsonNode> references = redis.opsForStream()
+				.range("lhamalog:stream:traces", org.springframework.data.domain.Range.unbounded())
+				.stream()
+				.map(entry -> JSON.readTree((String) entry.getValue().get("body")))
+				.filter(body -> batchId.equals(body.path("openobserve").path("batchId").asString(null)))
+				.toList();
+			assertThat(references).hasSize(1);
+			assertThat(references.getFirst().path("signal").asString()).isEqualTo("TRACES");
+			assertThat(references.getFirst().path("openobserve").path("recordId").asString())
+				.isEqualTo(text(documents.getFirst(), "lhamalog_record_id"));
+			assertThat(references.getFirst().toString()).doesNotContain(name);
 		}
 	}
 

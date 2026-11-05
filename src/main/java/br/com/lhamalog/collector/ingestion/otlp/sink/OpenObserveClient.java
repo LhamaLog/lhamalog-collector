@@ -60,6 +60,10 @@ public class OpenObserveClient {
 					.encodeToString((username + ":" + (password == null ? "" : password)).getBytes(StandardCharsets.UTF_8));
 	}
 
+	public String organization() {
+		return organization;
+	}
+
 	public void ingest(String stream, List<Map<String, Object>> documents) {
 		if (baseUrl == null) {
 			throw new SinkUnavailableException("OpenObserve URL is not configured");
