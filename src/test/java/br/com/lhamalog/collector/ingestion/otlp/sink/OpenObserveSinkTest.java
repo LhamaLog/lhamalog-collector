@@ -289,4 +289,25 @@ class OpenObserveSinkTest {
 		assertThat(doc.get("scopeVersion").asString()).isEqualTo("2.1");
 	}
 
+	@Test
+	void emptyBatchDoesNotCallOpenObserve() {
+		StoredBatch logs = new OpenObserveLogsSink(client, "logs", CLOCK).store("t", "p", List.of());
+		StoredBatch traces = new OpenObserveTracesSink(client, "traces", CLOCK).store("t", "p", List.of());
+		assertThat(lastPath.get()).isNull();
+		assertThat(logs.recordIds()).isEmpty();
+		assertThat(traces.recordIds()).isEmpty();
+		assertThat(logs.minTimestampMicros()).isEqualTo(CLOCK.instant().toEpochMilli() * 1000);
+	}
+
+	@Test
+	void batchWithoutTimeUnixNanoHasTheRangeOfTheAcceptInstant() {
+		answer = "{\"code\":200,\"status\":[{\"name\":\"x\",\"successful\":2,\"failed\":0}]}";
+		StoredBatch batch = new OpenObserveLogsSink(client, "logs", CLOCK).store("t", "p",
+				List.of(Scoped.of(LogRecord.getDefaultInstance()), Scoped.of(LogRecord.newBuilder().setSeverityNumberValue(9).build())));
+		long accept = CLOCK.instant().toEpochMilli() * 1000;
+		assertThat(batch.minTimestampMicros()).isEqualTo(accept);
+		assertThat(batch.maxTimestampMicros()).isEqualTo(accept);
+		assertThat(batch.receivedAt()).isEqualTo("2026-10-31T12:00:00Z");
+	}
+
 }

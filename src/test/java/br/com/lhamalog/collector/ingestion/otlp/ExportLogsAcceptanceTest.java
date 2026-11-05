@@ -235,4 +235,40 @@ class ExportLogsAcceptanceTest {
 		assertThat(entriesOfProduct(product.productId())).isEmpty();
 	}
 
+	@Test
+	void resentBatchKeepsBatchIdIdempotencyIdAndRecordId() throws Exception {
+		SeededProduct product = OtlpAcceptanceSupport.seedProduct(mongo);
+		String marker = "resend-" + UUID.randomUUID();
+		byte[] body = spoofingBatch(marker).toByteArray();
+		assertThat(postProtobuf(httpServer.getPort(), "/v1/logs", product.token(), body).statusCode()).isEqualTo(200);
+		assertThat(postProtobuf(httpServer.getPort(), "/v1/logs", product.token(), body).statusCode()).isEqualTo(200);
+
+		long end = System.nanoTime() + java.time.Duration.ofSeconds(60).toNanos();
+		List<JsonNode> documents = awaitDocuments(env, "logs", "body", marker);
+		while (documents.size() < 2 && System.nanoTime() < end) {
+			Thread.sleep(1000);
+			documents = OtlpAcceptanceSupport.search(env, "logs", "body", marker);
+		}
+		assertThat(documents).hasSize(2);
+		assertThat(text(documents.get(0), "lhamalog_record_id")).isEqualTo(text(documents.get(1), "lhamalog_record_id"));
+		String batchId = text(documents.get(0), "lhamalog_batch_id");
+		String recordId = text(documents.get(0), "lhamalog_record_id");
+		assertThat(text(documents.get(1), "lhamalog_batch_id")).isEqualTo(batchId);
+
+		List<MapRecord<String, Object, Object>> entries = redis.opsForStream()
+			.range("lhamalog:stream:logs", Range.unbounded())
+			.stream()
+			.filter(entry -> batchId.equals(JSON.readTree((String) entry.getValue().get("body"))
+				.path("openobserve")
+				.path("batchId")
+				.asString(null)))
+			.toList();
+		assertThat(entries).hasSize(2);
+		assertThat(entries).allSatisfy(entry -> assertThat(entry.getValue().get("idempotencyId")).isEqualTo(batchId));
+		assertThat(entries).allSatisfy(entry -> assertThat(JSON.readTree((String) entry.getValue().get("body"))
+			.path("openobserve")
+			.path("recordId")
+			.asString()).isEqualTo(recordId));
+	}
+
 }

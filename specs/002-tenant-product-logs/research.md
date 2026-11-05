@@ -60,8 +60,9 @@
 - **Decisão**: trazer para `br.com.lhamalog.collector.messaging` o núcleo da POC
   (`AbstractStreamPublisher<T>` com `publish` final, `MessageEnvelope`, `MessagingProperties`, `MetadataKeys`,
   `StreamNames`), só o lado que publica. `publish` recebe `OutboundMessage<T>` com o id já calculado.
-- XADD em pipeline, um por log, com `MAXLEN ~ 100000`; override por
-  `LHAMALOG_MESSAGING_STREAM_<DOMINIO>_MAX_LEN` (aqui `LHAMALOG_MESSAGING_STREAM_LOGS_MAX_LEN`). Valor
+- XADD um por lote (revisão D9: a entrada é a referência do lote), com `MAXLEN ~ 100000`; override por
+  `LHAMALOG_MESSAGING_STREAM_<DOMINIO>_MAX_LEN` (`LHAMALOG_MESSAGING_STREAM_LOGS_MAX_LEN` e
+  `LHAMALOG_MESSAGING_STREAM_TRACES_MAX_LEN`). Valor
   inválido derruba a subida.
 - Campos da entrada: `idempotencyId`, `event`, `origin`, `schemaVersion`, `publishedAt` (ISO UTC),
   `metadata` (JSON) e `body` (JSON).
@@ -112,3 +113,33 @@ O lote recebe o máximo e `severityCounts` por nível. Spans não têm severidad
 ## D12. Bytes
 
 `bytes` é a soma do tamanho protobuf serializado dos registros aceitos (sem resource e scope).
+
+## D13. Lotes legítimos idênticos colidem (revisão do PR #3, 2026-11-04)
+
+- **Decisão**: dois envios com bytes idênticos (mesmo token, recurso, escopo e registros, inclusive
+  `timeUnixNano`) geram o mesmo `batchId` e os mesmos `lhamalog_record_id`, e a Varredura trata o segundo
+  como reenvio. É intencional: o collector não distingue um reenvio do cliente de um lote idêntico legítimo.
+- **Motivo**: deduplicação no reenvio após 503 vale mais; lotes reais quase sempre diferem no horário.
+- **Alternativas**: id aleatório por requisição (quebra a deduplicação); id do cliente (OTLP não tem).
+
+## D14. Pontos do contrato da referência
+
+- `correlationId` é aleatório por chamada de exportação: não é estável entre reenvios. Para deduplicar use
+  `idempotencyId` (= `batchId`).
+- `bytes` conta só os registros serializados (sem resource e scope), como em D12.
+- O Finder não limita a busca a `size = recordCount`: um reenvio após 503 pode deixar cópias com o mesmo
+  `lhamalog_record_id`. Ele pagina sem esse limite e deduplica por `lhamalog_record_id` antes de contar.
+
+## D15. Severidades fora do comum (revisão do PR #3)
+
+- `severityNumber` de 1 a 24 manda; o texto só é lido com número 0 (ou negativo). Número e texto
+  conflitantes: vale o número (ex.: 9 + `ERROR` é INFO).
+- Número acima de 24 (fora do OTel, ex.: 25) conta como FATAL/CRITICAL, para não rebaixar algo que o
+  cliente marcou como mais grave que o máximo.
+- Texto (sem diferenciar maiúsculas, prefixo, espaços removidos): `FATAL`, `CRIT`, `EMERG`, `ALERT` são
+  FATAL; `ERR` é ERROR; `WARN` é WARN; `INFO` e `NOTICE` são INFO; `DEBUG` é DEBUG; `TRACE` é TRACE; o resto
+  UNSPECIFIED.
+
+## D16. Lote vazio
+
+- `store()` volta sem chamar o OpenObserve quando o lote não tem registros aceitos, e nada é publicado.

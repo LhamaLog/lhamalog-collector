@@ -6,11 +6,13 @@
 
 ## Summary
 
-Garantir e testar que todo log aceito leva `tenantId` e `productId` do token e preserva o contexto OTel, e
-publicar cada log aceito no Redis Stream `lhamalog:stream:logs` como evento `log.ingested`, depois da
+Garantir e testar que todo log aceito leva `tenantId` e `productId` do token e preserva o contexto OTel no
+OpenObserve, e publicar uma referência por lote aceito no Redis Stream `lhamalog:stream:logs` como evento
+`log.ingested` v2 (traces em `lhamalog:stream:traces`, `trace.ingested` v1), depois da
 autenticação, da validação e da gravação no OpenObserve. A publicação usa o núcleo de mensageria da POC
 (`AbstractStreamPublisher<T>`, XADD `MAXLEN ~ 100000`). Falha do Redis responde 503 / `UNAVAILABLE`
-para nova tentativa; o `idempotencyId` é determinístico. Decisões em [research.md](research.md).
+para nova tentativa; o `idempotencyId` é o `batchId` determinístico do lote. A fila não leva conteúdo nem
+atributos OTel: o Finder carrega o lote pelo `lhamalog_batch_id` (revisão D9). Decisões em [research.md](research.md).
 
 ## Technical Context
 
@@ -27,7 +29,7 @@ opentelemetry-proto, gRPC
 
 **Project Type**: web-service (receptor OTLP)
 
-**Performance Goals**: um pipeline de XADD por lote, sem ida e volta por log
+**Performance Goals**: um XADD por lote (uma entrada de referência), sem ida e volta por log
 
 **Constraints**: timeout de comando do Redis 2 s; nenhum evento sem token válido; sem segredo em arquivo
 

@@ -22,12 +22,6 @@ import java.util.Map;
  */
 public class OpenObserveTracesSink implements TracesSink, BatchStore<Span> {
 
-	/** Batch id written in every document; with the range of {@code _timestamp} it locates the batch. */
-	public static final String BATCH_ID_FIELD = "lhamalog_batch_id";
-
-	/** Record id (the old per log {@code idempotencyId}); locates a single record. */
-	public static final String RECORD_ID_FIELD = "lhamalog_record_id";
-
 	private final OpenObserveClient client;
 
 	private final String stream;
@@ -47,6 +41,9 @@ public class OpenObserveTracesSink implements TracesSink, BatchStore<Span> {
 
 	@Override
 	public StoredBatch store(String tenantId, String productId, List<Scoped<Span>> acceptedSpans) {
+		if (acceptedSpans.isEmpty()) {
+			return StoredBatch.empty(Signal.TRACES, client.organization(), stream, clock.instant());
+		}
 		List<String> recordIds = RecordIds.of(tenantId, productId, acceptedSpans);
 		String batchId = RecordIds.batchId(Signal.TRACES, recordIds);
 		long min = Long.MAX_VALUE;
@@ -64,8 +61,8 @@ public class OpenObserveTracesSink implements TracesSink, BatchStore<Span> {
 					: receivedMicros;
 			doc.put("_timestamp", timestamp);
 			doc.put("receivedAt", receivedAt.toString());
-			doc.put(BATCH_ID_FIELD, batchId);
-			doc.put(RECORD_ID_FIELD, recordIds.get(index++));
+			doc.put(StoredBatch.BATCH_ID_FIELD, batchId);
+			doc.put(StoredBatch.RECORD_ID_FIELD, recordIds.get(index++));
 			min = Math.min(min, timestamp);
 			max = Math.max(max, timestamp);
 			doc.put("traceId", OtlpValues.hex(span.getTraceId()));
@@ -94,10 +91,6 @@ public class OpenObserveTracesSink implements TracesSink, BatchStore<Span> {
 			documents.add(doc);
 		}
 		client.ingest(stream, documents);
-		if (documents.isEmpty()) {
-			min = receivedMicros;
-			max = receivedMicros;
-		}
 		return new StoredBatch(Signal.TRACES, client.organization(), stream, batchId, recordIds, min, max,
 				receivedAt.toString());
 	}

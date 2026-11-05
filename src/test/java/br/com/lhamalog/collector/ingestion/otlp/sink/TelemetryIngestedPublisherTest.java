@@ -146,4 +146,61 @@ class TelemetryIngestedPublisherTest {
 		assertThat(Criticality.of(0, "")).isEqualTo(Criticality.UNSPECIFIED);
 	}
 
+	@Test
+	void criticalityOfSyslogAndOutOfRangeSeverities() {
+		assertThat(Criticality.of(0, "CRIT")).isEqualTo(Criticality.FATAL);
+		assertThat(Criticality.of(0, "critical")).isEqualTo(Criticality.FATAL);
+		assertThat(Criticality.of(0, "EMERG")).isEqualTo(Criticality.FATAL);
+		assertThat(Criticality.of(0, "Emergency")).isEqualTo(Criticality.FATAL);
+		assertThat(Criticality.of(0, "ALERT")).isEqualTo(Criticality.FATAL);
+		assertThat(Criticality.of(0, "NOTICE")).isEqualTo(Criticality.INFO);
+		assertThat(Criticality.of(0, "TRACE")).isEqualTo(Criticality.TRACE);
+		assertThat(Criticality.of(0, " warning ")).isEqualTo(Criticality.WARN);
+		assertThat(Criticality.of(0, null)).isEqualTo(Criticality.UNSPECIFIED);
+		assertThat(Criticality.of(25, "")).isEqualTo(Criticality.FATAL);
+		assertThat(Criticality.of(-1, "ERROR")).isEqualTo(Criticality.ERROR);
+		assertThat(Criticality.of(24, "")).isEqualTo(Criticality.FATAL);
+		assertThat(Criticality.of(1, "")).isEqualTo(Criticality.TRACE);
+	}
+
+	@Test
+	void severityNumberWinsOverConflictingText() {
+		assertThat(Criticality.of(9, "ERROR")).isEqualTo(Criticality.INFO);
+		assertThat(Criticality.of(17, "INFO")).isEqualTo(Criticality.ERROR);
+		assertThat(Criticality.of(21, "DEBUG")).isEqualTo(Criticality.FATAL);
+		assertThat(Criticality.of(17, "INFO").priority()).isEqualTo("HIGH");
+	}
+
+	@Test
+	void serviceNamesAreDistinctSortedAndOnlyStrings() {
+		Resource billing = Resource.newBuilder().addAttributes(kv("service.name", "billing")).build();
+		Resource numeric = Resource.newBuilder()
+			.addAttributes(KeyValue.newBuilder().setKey("service.name").setValue(AnyValue.newBuilder().setIntValue(42)))
+			.build();
+		InstrumentationScope scope = InstrumentationScope.getDefaultInstance();
+		List<Scoped<LogRecord>> records = List.of(new Scoped<>(RESOURCE, scope, INFO), new Scoped<>(billing, scope, INFO),
+				new Scoped<>(numeric, scope, INFO), new Scoped<>(RESOURCE, scope, log(13, "WARN", "x")));
+		TelemetryIngestedBody body = LOGS
+			.message("tenant-1", "product-a", batch(Signal.LOGS, RecordIds.of("tenant-1", "product-a", records)), records,
+					"corr-1")
+			.body();
+		assertThat(body.serviceNames()).containsExactly("billing", "checkout");
+		assertThat(body.recordCount()).isEqualTo(4);
+	}
+
+	@Test
+	void tracesWithSeveralTraceIdsLeaveTraceIdOutOfMetadata() {
+		ByteString other = ByteString.copyFrom(new byte[] { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2 });
+		InstrumentationScope scope = InstrumentationScope.getDefaultInstance();
+		List<Scoped<Span>> records = List.of(
+				new Scoped<>(RESOURCE, scope, Span.newBuilder().setTraceId(TRACE).setName("a").build()),
+				new Scoped<>(RESOURCE, scope, Span.newBuilder().setTraceId(other).setName("b").build()));
+		OutboundMessage<TelemetryIngestedBody> message = TRACES.message("tenant-1", "product-a",
+				batch(Signal.TRACES, RecordIds.of("tenant-1", "product-a", records)), records, "corr-1");
+		assertThat(message.metadata()).doesNotContainKey(MetadataKeys.TRACE_ID)
+			.containsEntry(MetadataKeys.TENANT_ID, "tenant-1");
+		assertThat(message.body().openobserve().recordId()).isNull();
+		assertThat(message.body().recordCount()).isEqualTo(2);
+	}
+
 }

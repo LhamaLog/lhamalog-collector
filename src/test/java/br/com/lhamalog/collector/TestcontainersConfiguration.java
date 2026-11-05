@@ -39,7 +39,10 @@ public class TestcontainersConfiguration {
 		return new MongoDBContainer(DockerImageName.parse("mongo:latest"));
 	}
 
-	/** Fila da Varredura: recebe cada log aceito em lhamalog:stream:logs (LLT-182). Mesma tag do compose local. */
+	/**
+	 * Fila da Varredura: recebe uma referencia por lote aceito em lhamalog:stream:logs e lhamalog:stream:traces
+	 * (LLT-182); o conteudo fica no OpenObserve. Mesma tag do compose local.
+	 */
 	@Bean
 	@ServiceConnection(name = "redis")
 	GenericContainer<?> redisContainer() {

@@ -75,6 +75,17 @@ Código em `src/main/java/br/com/lhamalog/collector/`. Testes em `src/test/java/
 - [x] T027 Testes: `TelemetryIngestedPublisherTest`, `OpenObserveSinkTest`, `PublishingLogsSinkTest`, aceite de logs e traces (referência localiza o lote; sem conteúdo)
 - [x] T028 Rodar `.\mvnw.cmd test`
 
+## Phase 9: Revisão do PR #3 (2026-11-04)
+
+- [x] T029 Docs: README (referência por lote, `lhamalog:stream:traces`, `trace.ingested`, `LHAMALOG_MESSAGING_STREAM_TRACES_MAX_LEN`), `.env.example`, `application-local/prod.properties`, Javadoc de `TestcontainersConfiguration`, `plan.md`, `quickstart.md`, `research.md`; `CHANGELOG.md` com `log.ingested` v2 como BREAKING
+- [x] T030 Contrato `log-ingested-stream.md`: Finder sem `size = recordCount`, deduplica por `lhamalog_record_id`; `correlationId`, `bytes` e lotes idênticos (research D13, D14)
+- [x] T031 `store()` volta cedo com lote vazio (sem chamar o OpenObserve); `BATCH_ID_FIELD`/`RECORD_ID_FIELD` só em `StoredBatch` (research D16)
+- [x] T032 [P] `PublishingTracesSinkTest`: ordem store → publish, OpenObserve fora sem publicar, Redis fora como `DestinationUnavailable`
+- [x] T033 [P] `RedisDownAcceptanceTest`: Redis fora de ponta a ponta, 503 + `Retry-After: 5` no HTTP e `UNAVAILABLE` no gRPC, logs e traces
+- [x] T034 [P] `ExportLogsAcceptanceTest`: reenvio do mesmo lote repete `batchId`/`idempotencyId` e `lhamalog_record_id`
+- [x] T035 [P] Testes de `Criticality.of` (CRIT, EMERG, ALERT, NOTICE, TRACE, 25, número contra texto; research D15), lote sem `timeUnixNano`, vários `service.name` e não texto, traces com vários `traceId`
+- [x] T036 Rodar `.\mvnw.cmd verify`
+
 ## Dependencies
 
 Phase 1 e 2 antes das histórias. US1 antes de US2 (o publicador existe). US3 e US4 dependem do

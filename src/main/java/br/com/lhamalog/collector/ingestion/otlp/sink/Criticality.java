@@ -6,6 +6,10 @@ import java.util.Locale;
 /**
  * Criticality from the OTel severity only (LLT-182): {@code severityNumber} ranges, else the
  * {@code severityText} prefix, else {@link #UNSPECIFIED}. Spans have no severity, so they are UNSPECIFIED.
+ *
+ * <p>A positive number always wins over a conflicting text; a number above 24 (outside OTel) counts as
+ * FATAL; the text is read only when the number is 0 or negative, case insensitive, with syslog names
+ * ({@code CRIT}, {@code EMERG}, {@code ALERT} as FATAL, {@code NOTICE} as INFO). See research D15.
  */
 public enum Criticality {
 
