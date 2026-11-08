@@ -90,3 +90,14 @@ Código em `src/main/java/br/com/lhamalog/collector/`. Testes em `src/test/java/
 
 Phase 1 e 2 antes das histórias. US1 antes de US2 (o publicador existe). US3 e US4 dependem do
 `PublishingLogsSink` (T014).
+
+## Phase 10: Ajustes finais do PR #3 (LLT-182)
+
+- [X] T037 [P] Em `src/test/java/br/com/lhamalog/collector/ingestion/otlp/ExportTracesAcceptanceTest.java`, adicionar o teste E2E `resentBatchKeepsBatchIdIdempotencyIdAndRecordId` para reenvio de traces
+- [X] T038 [P] Adicionar newline final em `src/test/java/br/com/lhamalog/collector/ingestion/otlp/RedisDownAcceptanceTest.java` e `src/test/java/br/com/lhamalog/collector/ingestion/otlp/application/PublishingTracesSinkTest.java`
+
+## Pós-LLT-182 (PR separado)
+
+- [ ] T039 Em `src/main/java/br/com/lhamalog/collector/config/OtlpReceiverConfiguration.java`, injetar `JsonMapper` e `MessagingProperties` via Spring
+- [ ] T040 [P] Em `specs/004/`, implementar LLT-184: retry + DLQ em PR próprio
+- [ ] T041 [P] Fora do collector, garantir que Varredura/Finder consuma `log.ingested` v2 sem `size=recordCount`
