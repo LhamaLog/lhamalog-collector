@@ -3,6 +3,8 @@
 description: "Task list for tenant/product log association and log.ingested publishing"
 ---
 
+**Responsável**: michelbocchijr@gmail.com
+
 # Tasks: Associar logs ao tenant e ao produto
 
 **Input**: Design documents from `/specs/002-tenant-product-logs/`
@@ -40,9 +42,9 @@ Código em `src/main/java/br/com/lhamalog/collector/`. Testes em `src/test/java/
 
 ## Phase 3: User Story 1 - Log com tenant e produto e contexto OTel (P1)
 
-- [x] T010 [US1] `ingestion/otlp/sink/LogIngestedBody.java`: corpo com log, recurso e escopo, sem `tenantId`
-- [x] T011 [US1] `ingestion/otlp/sink/LogIngestedPublisher.java`: stream `logs`, evento `log.ingested`, origem `collector`, metadados com tenant/produto do token, `correlationId` e `traceId`
-- [x] T012 [P] [US1] Teste `ingestion/otlp/sink/LogIngestedPublisherTest.java`: metadados, preservação de recurso/escopo/atributos, corpo sem tenant/produto no topo
+- [x] T010 [US1] `ingestion/otlp/sink/LogIngestedBody.java`: corpo com log, recurso e escopo, sem `tenantId` — substituída por T024–T027 (revisão D9: referência por lote)
+- [x] T011 [US1] `ingestion/otlp/sink/LogIngestedPublisher.java`: stream `logs`, evento `log.ingested`, origem `collector`, metadados com tenant/produto do token, `correlationId` e `traceId` — substituída por T024–T027 (revisão D9: referência por lote)
+- [x] T012 [P] [US1] Teste `ingestion/otlp/sink/LogIngestedPublisherTest.java`: metadados, preservação de recurso/escopo/atributos, corpo sem tenant/produto no topo — substituída por T024–T027 (revisão D9: referência por lote)
 - [x] T013 [US1] Em `ExportLogsAcceptanceTest.java`, conferir no stream tenant/produto do token, `service.name`, atributos de recurso e de log, com atributos falsos no lote
 
 ## Phase 4: User Story 2 - Publicação após aceite (P1)

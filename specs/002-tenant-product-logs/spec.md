@@ -4,6 +4,8 @@
 
 **Created**: 2026-11-01
 
+**Responsável**: michelbocchijr@gmail.com
+
 **Status**: Draft
 
 **Input**: Jira LLT-182 "Associar logs ao tenant e ao produto" (Épico Coletor, E05.F1.2, prioridade Highest),
@@ -12,13 +14,20 @@ com escopo ampliado: publicar os logs aceitos numa fila para a Varredura.
 **Revisão 2026-11-02**: a fila leva só uma **referência** ao lote no OpenObserve (fonte do conteúdo), para
 logs e traces. Decisões em research.md D9-D12.
 
+## Clarifications
+
+### Session 2026-11-08
+
+- Q: Como os registros OTel aceitos e o evento publicado na fila devem representar um lote parcialmente aceito? → A: Os registros aceitos são guardados no OpenObserve com a identidade do token e o contexto OTel intacto; a fila recebe uma única referência ao subconjunto aceito, publicada integralmente ou não publicada.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Todo log recebido pertence a um tenant e a um produto (Priority: P1)
 
-O produto cliente envia logs com o seu token. Cada log guardado e cada log entregue à Varredura leva o
-`tenantId` e o `productId` que vêm do token, nunca de dados do lote. O contexto OTel (recurso, escopo e
-atributos do log) chega intacto.
+O produto cliente envia logs com o seu token. Cada registro OTel guardado no OpenObserve leva o `tenantId` e
+o `productId` que vêm do token, nunca de dados do lote, e preserva o contexto OTel (recurso, escopo e
+atributos do log) intacto. O evento publicado na fila não leva registros OTel: é somente uma referência ao
+lote guardado.
 
 **Why this priority**: sem dono confiável o log não pode ser isolado por cliente nem cobrado; é o critério
 central do LLT-182.
@@ -29,11 +38,12 @@ destino e a fila.
 **Acceptance Scenarios**:
 
 1. **Given** um token ativo do produto P do tenant T, **When** o produto envia um log por HTTP ou gRPC,
-   **Then** o log guardado e a mensagem da fila têm `tenantId` T e `productId` P.
+   **Then** o registro OTel guardado tem `tenantId` T e `productId` P, e a mensagem da fila referencia o lote
+   aceito.
 2. **Given** um lote com atributos `tenantId`/`productId` falsos no recurso e no log, **When** é aceito,
    **Then** a identidade continua a do token e os atributos falsos continuam como atributos, sem alteração.
 3. **Given** um log com `service.name`, atributos de recurso, escopo e atributos próprios, **When** é aceito,
-   **Then** a mensagem da fila preserva todos esses valores.
+   **Then** o registro guardado preserva todos esses valores e a mensagem da fila só referencia o lote.
 
 ---
 
@@ -51,7 +61,9 @@ Depois de autenticado, validado e guardado, cada lote aceito vira um evento `log
 1. **Given** um lote válido, **When** o collector confirma o recebimento, **Then** existe um evento por lote
    aceito, com identificador de idempotência, nome do evento, origem, versão de esquema e instante de
    publicação.
-2. **Given** um lote misto, **When** é aceito parcialmente, **Then** só os logs válidos vão para a fila.
+2. **Given** um lote misto, **When** é aceito parcialmente, **Then** uma única referência é publicada para o
+   subconjunto válido aceito; `recordCount`, os identificadores e a faixa de `_timestamp` correspondem somente
+   a esse subconjunto, e os registros inválidos não são guardados nem alcançáveis.
 3. **Given** o mesmo lote reenviado pelo cliente, **When** é aceito de novo, **Then** o lote e cada registro têm os
    mesmos identificadores da primeira vez.
 
@@ -87,7 +99,8 @@ Depois de autenticado, validado e guardado, cada lote aceito vira um evento `log
 - Reenvio após falha da fila: o armazenamento recebe o lote de novo (entrega pelo menos uma vez) e a
   Varredura descarta os eventos repetidos pelo identificador.
 - Recusa parcial pelo armazenamento: não dá para saber quais registros foram guardados, então nada é
-  publicado (risco documentado em research.md).
+  publicado (risco documentado em research.md). O único XADD publica a referência integral do subconjunto
+  aceito ou não publica nada; nunca publica uma referência parcial.
 - Log sem `traceId`: a mensagem não leva `traceId` nos metadados.
 - Fila cheia: as entradas mais antigas são descartadas acima do limite configurado.
 
@@ -98,7 +111,9 @@ Depois de autenticado, validado e guardado, cada lote aceito vira um evento `log
 - **FR-001**: Todo log aceito MUST levar `tenantId` e `productId` vindos do token validado.
 - **FR-002**: Dados do lote MUST NOT alterar `tenantId` nem `productId`.
 - **FR-003**: Atributos de recurso, `service.name`, escopo (nome, versão, atributos) e atributos do log MUST
-  ser preservados no armazenamento (OpenObserve). A fila MUST NOT levar conteúdo de log ou span.
+  ser preservados no armazenamento (OpenObserve). A fila MUST NOT levar registros OTel, conteúdo de log ou
+  span. O único XADD MUST publicar a referência integral do subconjunto aceito ou não publicar nada; nunca
+  uma referência a um lote parcialmente publicado.
 - **FR-004**: Cada lote aceito e guardado MUST ser publicado como uma referência: `log.ingested` (versão 2)
   em `lhamalog:stream:logs` ou `trace.ingested` (versão 1) em `lhamalog:stream:traces`, origem `collector`,
   com `tenantId` apenas nos metadados, junto de `productId`, `correlationId` e `traceId` quando o lote tem

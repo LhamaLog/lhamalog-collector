@@ -1,5 +1,7 @@
 # Quickstart: Associar logs ao tenant e ao produto
 
+**Responsável**: michelbocchijr@gmail.com
+
 Roteiro para provar a feature. Cenários em [spec.md](spec.md); formato do evento em
 [contracts/log-ingested-stream.md](contracts/log-ingested-stream.md).
 

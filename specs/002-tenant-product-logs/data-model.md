@@ -1,5 +1,7 @@
 # Data Model: Associar logs ao tenant e ao produto (LLT-182)
 
+**Responsável**: michelbocchijr@gmail.com
+
 ## Documento no OpenObserve
 
 Como em `specs/001-otlp-receiver/data-model.md` (logs e traces), mais dois campos (2026-11-02):

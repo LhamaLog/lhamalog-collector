@@ -1,5 +1,7 @@
 # Contrato: eventos `log.ingested` e `trace.ingested` (referência ao OpenObserve)
 
+**Responsável**: michelbocchijr@gmail.com
+
 Publicador: lhamalog-collector. Consumidor: Varredura (Finder carrega o conteúdo). Base: rascunho de ADR de
 mensageria com Redis Streams (status Proposta). Revisão 2026-11-02: o corpo é só uma referência.
 

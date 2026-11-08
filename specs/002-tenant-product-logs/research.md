@@ -1,5 +1,7 @@
 # Research: Associar logs ao tenant e ao produto (LLT-182)
 
+**Responsável**: michelbocchijr@gmail.com
+
 ## D1. Origem de `tenantId` e `productId`
 
 - **Decisão**: manter a regra do LLT-181: os dois vêm só do token validado (`TokenValidationResult.Valid`).
@@ -76,7 +78,7 @@
 ## D8. Testes
 
 - Unitários: ordem e semântica de falha (`PublishingLogsSinkTest`), envelope e id determinístico
-  (`LogIngestedPublisherTest`), limites (`MessagingPropertiesTest`).
+  (`TelemetryIngestedPublisherTest`), limites (`MessagingPropertiesTest`).
 - Integração com Redis real por Testcontainers (`StreamPublisherRedisTest`): campos, MAXLEN ~, Redis fora.
 - Aceitação (`ExportLogsAcceptanceTest`): stream com tenant/produto do token e contexto OTel preservado;
   token recusado e lote inválido sem entrada no stream. Imagem `redis:8.2.10`, a mesma do compose.

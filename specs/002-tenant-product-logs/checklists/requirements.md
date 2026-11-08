@@ -1,5 +1,7 @@
 # Specification Quality Checklist: Associar logs ao tenant e ao produto
 
+**Responsável**: michelbocchijr@gmail.com
+
 **Purpose**: Validate specification completeness and quality before proceeding to planning
 **Created**: 2026-11-01
 **Feature**: [spec.md](../spec.md)

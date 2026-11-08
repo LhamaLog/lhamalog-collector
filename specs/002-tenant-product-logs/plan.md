@@ -1,5 +1,7 @@
 # Implementation Plan: Associar logs ao tenant e ao produto
 
+**Responsável**: michelbocchijr@gmail.com
+
 **Branch**: `feature/LLT-182-tenant-product-logs` | **Date**: 2026-11-01 | **Spec**: [spec.md](spec.md)
 
 **Input**: Feature specification from `/specs/002-tenant-product-logs/spec.md`
