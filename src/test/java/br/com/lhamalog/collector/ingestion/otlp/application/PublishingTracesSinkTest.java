@@ -1,4 +1,4 @@
-// Author: LhamaLog Desenvolvimento (IA) - LLT-182
+// Author: LhamaLog Desenvolvimento (IA) - LLT-184
 package br.com.lhamalog.collector.ingestion.otlp.application;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -21,7 +21,7 @@ import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
-/** LLT-182: traces follow the same order as logs, OpenObserve then queue, and Redis down is retryable. */
+/** LLT-182/184: traces mirror logs; ultimate MessagePublishException is DestinationUnavailable. */
 class PublishingTracesSinkTest {
 
 	private static final Span VALID = Span.newBuilder()
@@ -93,7 +93,7 @@ class PublishingTracesSinkTest {
 	}
 
 	@Test
-	void redisFailureIsRetryableDestinationUnavailable() {
+	void ultimatePublishFailureIsRetryableDestinationUnavailable() {
 		PublishingTracesSink.Publisher failing = (tenant, product, batch, records) -> {
 			throw new MessagePublishException("redis down", null);
 		};
@@ -101,6 +101,13 @@ class PublishingTracesSinkTest {
 		assertThat(decision).isEqualTo(
 				new IngestionDecision.DestinationUnavailable(SinkUnavailableException.DEFAULT_RETRY_AFTER_SECONDS));
 		assertThat(calls).containsExactly("store");
+	}
+
+	@Test
+	void successfulPublishAfterStoreIsAccepted() {
+		IngestionDecision decision = export(VALID_TOKEN, new PublishingTracesSink(storing, recording), batch(VALID));
+		assertThat(decision).isInstanceOf(IngestionDecision.Accepted.class);
+		assertThat(calls).containsExactly("store", "publish:tenant-1/product-a/batch-1");
 	}
 
 }

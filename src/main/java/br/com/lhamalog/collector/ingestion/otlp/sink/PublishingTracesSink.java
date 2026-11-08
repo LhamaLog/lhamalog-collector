@@ -1,4 +1,4 @@
-// Author: LhamaLog Desenvolvimento (IA) - LLT-182
+// Author: LhamaLog Desenvolvimento (IA) - LLT-184
 package br.com.lhamalog.collector.ingestion.otlp.sink;
 
 import br.com.lhamalog.collector.ingestion.otlp.domain.Scoped;
@@ -13,7 +13,8 @@ import java.util.List;
  * <ul>
  * <li>Only batches that passed token validation and record assessment get here.</li>
  * <li>When OpenObserve fails or refuses any record, its exception propagates and nothing is published.</li>
- * <li>When Redis does not confirm, the failure becomes {@link SinkUnavailableException} (503 /
+ * <li>Publish retries Redis internally and may land on the traces DLQ (LLT-184). Only when both the main
+ * stream and the DLQ fail does the failure become {@link SinkUnavailableException} (503 /
  * {@code UNAVAILABLE}); the client retry rewrites OpenObserve with the same ids and publishes the same
  * batch id.</li>
  * </ul>

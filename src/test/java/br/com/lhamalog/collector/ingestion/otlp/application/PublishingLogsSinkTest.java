@@ -1,4 +1,4 @@
-// Author: LhamaLog Desenvolvimento (IA) - LLT-182
+// Author: LhamaLog Desenvolvimento (IA) - LLT-184
 package br.com.lhamalog.collector.ingestion.otlp.application;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -21,7 +21,7 @@ import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
-/** LLT-182: order OpenObserve then queue, and nothing reaches the queue without a valid token and record. */
+/** LLT-182/184: order OpenObserve then queue; MessagePublishException (after retries+DLQ) is DestinationUnavailable. */
 class PublishingLogsSinkTest {
 
 	private static final LogRecord VALID = LogRecord.newBuilder().setSeverityNumberValue(9).build();
@@ -95,7 +95,7 @@ class PublishingLogsSinkTest {
 	}
 
 	@Test
-	void redisFailureIsRetryableDestinationUnavailable() {
+	void ultimatePublishFailureIsRetryableDestinationUnavailable() {
 		PublishingLogsSink.Publisher failing = (tenant, product, batch, records) -> {
 			throw new MessagePublishException("redis down", null);
 		};
@@ -103,6 +103,13 @@ class PublishingLogsSinkTest {
 		assertThat(decision).isEqualTo(
 				new IngestionDecision.DestinationUnavailable(SinkUnavailableException.DEFAULT_RETRY_AFTER_SECONDS));
 		assertThat(calls).containsExactly("store");
+	}
+
+	@Test
+	void successfulPublishAfterStoreIsAccepted() {
+		IngestionDecision decision = export(VALID_TOKEN, new PublishingLogsSink(storing, recording), batch(VALID));
+		assertThat(decision).isInstanceOf(IngestionDecision.Accepted.class);
+		assertThat(calls).containsExactly("store", "publish:tenant-1/product-a/batch-1");
 	}
 
 }

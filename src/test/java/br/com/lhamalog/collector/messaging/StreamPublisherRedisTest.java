@@ -1,8 +1,11 @@
-// Author: LhamaLog Desenvolvimento (IA) - LLT-182
+// Author: LhamaLog Desenvolvimento (IA) - LLT-184
 package br.com.lhamalog.collector.messaging;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.spy;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -10,22 +13,25 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.IntStream;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.domain.Range;
+import org.springframework.data.redis.RedisConnectionFailureException;
 import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
 import org.springframework.data.redis.connection.lettuce.LettuceClientConfiguration;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.data.redis.connection.stream.MapRecord;
+import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.utility.DockerImageName;
 import tools.jackson.databind.json.JsonMapper;
 
-/** Publisher against a real Redis (Testcontainers), including MAXLEN ~ trimming and Redis down. */
+/** Publisher against a real Redis (Testcontainers), including MAXLEN ~, retry, DLQ and Redis down. */
 class StreamPublisherRedisTest {
 
 	private static final GenericContainer<?> REDIS = new GenericContainer<>(DockerImageName.parse("redis:8.2.10"))
@@ -42,7 +48,8 @@ class StreamPublisherRedisTest {
 	static final class SamplePublisher extends AbstractStreamPublisher<Map<String, Object>> {
 
 		SamplePublisher(StringRedisTemplate redis, MessagingProperties properties) {
-			super(redis, JSON, properties, CLOCK);
+			super(redis, JSON, properties, CLOCK, ms -> {
+			});
 		}
 
 		@Override
@@ -85,6 +92,7 @@ class StreamPublisherRedisTest {
 	@BeforeEach
 	void clean() {
 		redis.delete(StreamNames.stream("sample"));
+		redis.delete(StreamNames.dlq("sample"));
 	}
 
 	private static OutboundMessage<Map<String, Object>> message(int n) {
@@ -94,7 +102,7 @@ class StreamPublisherRedisTest {
 
 	@Test
 	void writesTheEnvelopeAsStreamFields() throws Exception {
-		new SamplePublisher(redis, new MessagingProperties(key -> null)).publish(List.of(message(1)));
+		new SamplePublisher(redis, MessagingProperties.defaults()).publish(List.of(message(1)));
 
 		List<MapRecord<String, Object, Object>> entries = redis.opsForStream()
 			.range("lhamalog:stream:sample", Range.unbounded());
@@ -112,7 +120,9 @@ class StreamPublisherRedisTest {
 	@Test
 	void trimsApproximatelyToTheConfiguredLimit() {
 		SamplePublisher publisher = new SamplePublisher(redis,
-				new MessagingProperties(Map.of("LHAMALOG_MESSAGING_STREAM_SAMPLE_MAX_LEN", "10")::get));
+				new MessagingProperties(
+						new MessagingProperties.Streams(10L, 100_000L, 100_000L, 100_000L, 100_000L),
+						MessagingProperties.Publish.defaults()));
 		assertThat(publisher.maxLen()).isEqualTo(10L);
 		for (int round = 0; round < 10; round++) {
 			int base = round * 100;
@@ -129,12 +139,59 @@ class StreamPublisherRedisTest {
 		down.afterPropertiesSet();
 		down.start();
 		try {
-			SamplePublisher publisher = new SamplePublisher(new StringRedisTemplate(down), new MessagingProperties(key -> null));
+			SamplePublisher publisher = new SamplePublisher(new StringRedisTemplate(down), MessagingProperties.defaults());
 			assertThatThrownBy(() -> publisher.publish(List.of(message(1)))).isInstanceOf(MessagePublishException.class);
 		}
 		finally {
 			down.destroy();
 		}
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
+	void transientFailureRecoversWithoutDlq() {
+		StringRedisTemplate spy = spy(redis);
+		AtomicInteger failuresLeft = new AtomicInteger(1);
+		doAnswer(invocation -> {
+			if (failuresLeft.getAndDecrement() > 0) {
+				throw new RedisConnectionFailureException("transient");
+			}
+			return invocation.callRealMethod();
+		}).when(spy).executePipelined(any(RedisCallback.class));
+
+		new SamplePublisher(spy, MessagingProperties.defaults()).publish(List.of(message(1)));
+
+		assertThat(redis.opsForStream().range("lhamalog:stream:sample", Range.unbounded())).hasSize(1);
+		assertThat(redis.opsForStream().range("lhamalog:stream:sample:dlq", Range.unbounded())).isNullOrEmpty();
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
+	void persistentFailureLandsOnDlqWithEnvelopeAndFailureFields() {
+		StringRedisTemplate spy = spy(redis);
+		AtomicInteger mainFailuresLeft = new AtomicInteger(3);
+		doAnswer(invocation -> {
+			if (mainFailuresLeft.getAndDecrement() > 0) {
+				throw new RedisConnectionFailureException("main down");
+			}
+			return invocation.callRealMethod();
+		}).when(spy).executePipelined(any(RedisCallback.class));
+
+		new SamplePublisher(spy, MessagingProperties.defaults()).publish(List.of(message(7)));
+
+		assertThat(redis.opsForStream().range("lhamalog:stream:sample", Range.unbounded())).isNullOrEmpty();
+		List<MapRecord<String, Object, Object>> dlq = redis.opsForStream()
+			.range("lhamalog:stream:sample:dlq", Range.unbounded());
+		assertThat(dlq).hasSize(1);
+		Map<Object, Object> fields = dlq.getFirst().getValue();
+		assertThat(fields).containsEntry("idempotencyId", "id-7")
+			.containsEntry("event", "sample.happened")
+			.containsEntry("targetStream", "lhamalog:stream:sample")
+			.containsEntry("attempts", "3")
+			.containsEntry("failedAt", "2026-11-01T12:00:00Z");
+		assertThat((String) fields.get("lastError")).contains("MessagePublishException");
+		assertThat(JSON.readTree((String) fields.get("metadata")).path("tenantId").asString()).isEqualTo("tenant-1");
+		assertThat(JSON.readTree((String) fields.get("body")).path("n").asInt()).isEqualTo(7);
 	}
 
 }

@@ -27,7 +27,7 @@ class TelemetryIngestedPublisherTest {
 
 	private static final JsonMapper JSON = JsonMapper.builder().build();
 
-	private static final MessagingProperties PROPERTIES = new MessagingProperties(key -> null);
+	private static final MessagingProperties PROPERTIES = MessagingProperties.defaults();
 
 	private static final LogIngestedPublisher LOGS = new LogIngestedPublisher(null, JSON, PROPERTIES, Clock.systemUTC());
 

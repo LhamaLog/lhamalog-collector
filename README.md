@@ -154,7 +154,26 @@ No local as portas são 4328/4327 porque 4318/4317 já são do OpenTelemetry Col
 
 **Servidor HTTP:** o OTLP/HTTP usa o servidor HTTP do JDK, com limites: até 200 requisições simultâneas (`OTLP_RECEIVER_HTTP_MAX_CONCURRENT_REQUESTS`; acima disso, 503 + `Retry-After: 1`), 1000 conexões (`OTLP_RECEIVER_HTTP_MAX_CONNECTIONS`), 30 s para ler a requisição e escrever a resposta (`OTLP_RECEIVER_HTTP_READ_TIMEOUT` / `OTLP_RECEIVER_HTTP_WRITE_TIMEOUT`), 30 s de conexão ociosa (`OTLP_RECEIVER_HTTP_IDLE_TIMEOUT`) e 200 conexões ociosas (`OTLP_RECEIVER_HTTP_MAX_IDLE_CONNECTIONS`). Esses tempos viram propriedades `sun.net.httpserver.*`, que valem para a JVM inteira; um `-Dsun.net.httpserver...` passado na linha de comando tem prioridade. Em produção, **coloque um proxy reverso** (nginx, Traefik ou o balanceador da nuvem) na frente da porta 4318, com TLS, limite de corpo e de taxa; o servidor do JDK não deve ficar exposto direto na internet. `OTLP_RECEIVER_MAX_MESSAGE_SIZE` precisa ser maior que 0 e no máximo 2147483647 bytes, senão o serviço não sobe.
 
-**Redis Stream (LLT-182):** depois que o lote passa pela autenticação, pela validação e é gravado no OpenObserve, o collector publica **uma referência por lote** (não o conteúdo dos logs) para a Varredura: logs em `lhamalog:stream:logs` (evento `log.ingested`, `schemaVersion` 1) e traces em `lhamalog:stream:traces` (evento `trace.ingested`, `schemaVersion` 1), com `XADD` e `MAXLEN ~` (padrão 100000 via `LHAMALOG_MESSAGING_STREAM_LOGS_MAX_LEN` e `LHAMALOG_MESSAGING_STREAM_TRACES_MAX_LEN`). Os atributos OTel ficam no OpenObserve; cada documento leva `lhamalog_batch_id` e `lhamalog_record_id`, e a referência traz organização, stream, `batchId` e a faixa de `_timestamp` para o Finder carregar o lote. O `tenantId` vai só nos metadados do envelope; prioridade e criticidade vêm só da severidade. Lote sem token válido, inválido ou vazio nunca chega ao stream. Se o Redis falhar, a resposta é 503 + `Retry-After: 5` (gRPC `UNAVAILABLE`; repetível; entrega pelo menos uma vez). O `idempotencyId` é o `batchId` do lote, determinístico: o reenvio do mesmo lote repete o id e a Varredura deduplica por lote. Contrato em `specs/002-tenant-product-logs/contracts/log-ingested-stream.md`. No ambiente local o Redis exige senha: defina `REDIS_PASSWORD` em `infra/local/.env`.
+**Redis Stream (LLT-182):** depois que o lote passa pela autenticação, pela validação e é gravado no OpenObserve, o collector publica **uma referência por lote** (não o conteúdo dos logs) para a Varredura: logs em `lhamalog:stream:logs` (evento `log.ingested`, `schemaVersion` 1) e traces em `lhamalog:stream:traces` (evento `trace.ingested`, `schemaVersion` 1), com `XADD` e `MAXLEN ~` (padrão 100000 via `LHAMALOG_MESSAGING_STREAM_LOGS_MAX_LEN` e `LHAMALOG_MESSAGING_STREAM_TRACES_MAX_LEN`). Os atributos OTel ficam no OpenObserve; cada documento leva `lhamalog_batch_id` e `lhamalog_record_id`, e a referência traz organização, stream, `batchId` e a faixa de `_timestamp` para o Finder carregar o lote. O `tenantId` vai só nos metadados do envelope; prioridade e criticidade vêm só da severidade. Lote sem token válido, inválido ou vazio nunca chega ao stream. O `idempotencyId` é o `batchId` do lote, determinístico: o reenvio do mesmo lote repete o id e a Varredura deduplica por lote. Contrato em `specs/002-tenant-product-logs/contracts/log-ingested-stream.md`. No ambiente local o Redis exige senha: defina `REDIS_PASSWORD` em `infra/local/.env`.
+
+## Retry e DLQ (LLT-184)
+
+O collector faz até 3 tentativas totais para publicar cada referência no Redis Stream, com esperas padrão de
+100 e 200 ms entre elas (a espera de 400 ms só ocorreria com 4 tentativas). O teto
+`LHAMALOG_MESSAGING_PUBLISH_BACKOFF_CEILING_MS` (padrão 2000) limita cada espera de backoff e a soma dessas
+esperas. Não há deadline da requisição nem do `XADD`; o tempo do comando Redis fica fora desse teto. Depois
+disso, grava o envelope original na DLQ do domínio: `lhamalog:stream:logs:dlq` ou
+`lhamalog:stream:traces:dlq`. A DLQ inclui `targetStream`, `attempts`, `lastError` e `failedAt`. `lastError`
+redige padrões conhecidos de credencial e não garante ausência de todo segredo arbitrário. Os eventos
+`log.ingested` e `trace.ingested` permanecem no `schemaVersion` 1 e continuam sendo uma referência por lote.
+
+Se a DLQ confirmar, a resposta ao exportador é sucesso (HTTP 200 / gRPC OK). Esse sucesso confirma a escrita
+na DLQ e não é o processamento final. A resposta é 503 + `Retry-After: 5` (gRPC `UNAVAILABLE`) quando a DLQ
+também falha e o processo ainda responde. Principal e DLQ usam a mesma instância Redis, então Redis
+totalmente indisponível também impede a DLQ. `MAXLEN ~` pode descartar entradas mais antigas sem consumo e
+não garante retenção nem durabilidade. Um timeout ambíguo pode deixar referência no principal e na DLQ; o
+consumidor deve deduplicar por `idempotencyId` = `batchId`. Se o processo morrer antes de responder, o 503
+não é garantido. Dono, retenção, persistência e alertas da DLQ ainda não estão definidos.
 
 ## Log de inicialização
 
@@ -201,6 +220,12 @@ No Linux/macOS: `OTLP_ENABLED=false make run-local`.
 | `REDIS_TIMEOUT` / `REDIS_CONNECT_TIMEOUT` | não | `2s` / `2s` |
 | `LHAMALOG_MESSAGING_STREAM_LOGS_MAX_LEN` | não | `100000` |
 | `LHAMALOG_MESSAGING_STREAM_TRACES_MAX_LEN` | não | `100000` |
+| `LHAMALOG_MESSAGING_STREAM_LOGS_DLQ_MAX_LEN` | não | `100000` |
+| `LHAMALOG_MESSAGING_STREAM_TRACES_DLQ_MAX_LEN` | não | `100000` |
+| `LHAMALOG_MESSAGING_PUBLISH_MAX_ATTEMPTS` | não | `3` |
+| `LHAMALOG_MESSAGING_PUBLISH_BACKOFF_INITIAL_MS` | não | `100` |
+| `LHAMALOG_MESSAGING_PUBLISH_BACKOFF_MULTIPLIER` | não | `2` |
+| `LHAMALOG_MESSAGING_PUBLISH_BACKOFF_CEILING_MS` | não | `2000` |
 | `REDIS_SSL_ENABLED` | não | `false` |
 | `OPENOBSERVE_URL` | sim | `https://openobserve:5080` |
 | `OPENOBSERVE_USERNAME` / `OPENOBSERVE_PASSWORD` | sim | credencial de ingestão do OpenObserve |

@@ -1,4 +1,4 @@
-// Author: LhamaLog Desenvolvimento (IA) - LLT-181
+// Author: LhamaLog Desenvolvimento (IA) - LLT-184
 package br.com.lhamalog.collector.config;
 
 import br.com.lhamalog.collector.ingestion.otlp.application.ExportLogsService;
@@ -24,7 +24,6 @@ import java.time.Duration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBooleanProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.core.env.Environment;
 import org.springframework.data.mongodb.core.MongoOperations;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import tools.jackson.databind.json.JsonMapper;
@@ -35,7 +34,8 @@ import tools.jackson.databind.json.JsonMapper;
  * {@code lhamalog.otlp.http.enabled} or {@code lhamalog.otlp.grpc.enabled}.
  *
  * <p>Accepted logs go to OpenObserve and then to the Redis Stream {@code lhamalog:stream:logs}; accepted spans to
- * {@code lhamalog:stream:traces}. The stream carries only a reference to OpenObserve (LLT-182).
+ * {@code lhamalog:stream:traces}. The stream carries only a reference to OpenObserve (LLT-182). Publish retries and
+ * DLQ are configured via {@link MessagingProperties} (LLT-184).
  */
 @Configuration(proxyBeanMethods = false)
 public class OtlpReceiverConfiguration {
@@ -54,15 +54,15 @@ public class OtlpReceiverConfiguration {
 	}
 
 	@Bean
-	LogIngestedPublisher logIngestedPublisher(StringRedisTemplate redis, Environment environment) {
-		return new LogIngestedPublisher(redis, JsonMapper.builder().build(),
-				new MessagingProperties(environment::getProperty), Clock.systemUTC());
+	LogIngestedPublisher logIngestedPublisher(StringRedisTemplate redis, JsonMapper json,
+			MessagingProperties messaging) {
+		return new LogIngestedPublisher(redis, json, messaging, Clock.systemUTC());
 	}
 
 	@Bean
-	TraceIngestedPublisher traceIngestedPublisher(StringRedisTemplate redis, Environment environment) {
-		return new TraceIngestedPublisher(redis, JsonMapper.builder().build(),
-				new MessagingProperties(environment::getProperty), Clock.systemUTC());
+	TraceIngestedPublisher traceIngestedPublisher(StringRedisTemplate redis, JsonMapper json,
+			MessagingProperties messaging) {
+		return new TraceIngestedPublisher(redis, json, messaging, Clock.systemUTC());
 	}
 
 	@Bean
