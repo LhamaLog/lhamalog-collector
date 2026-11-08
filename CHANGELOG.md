@@ -7,6 +7,14 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 
 ## [Não lançado]
 
+### Adicionado (LLT-184)
+
+- Retry interno de publicação no Redis Streams: até 3 tentativas totais, com esperas de 100 e 200 ms, e DLQ
+  por domínio quando as tentativas se esgotam.
+- DLQs `lhamalog:stream:logs:dlq` e `lhamalog:stream:traces:dlq`, preservando o envelope original e registrando
+  destino, tentativas, último erro sanitizado e instante da falha.
+- Injeção Spring de `MessagingProperties` e `JsonMapper` em `OtlpReceiverConfiguration`.
+
 ### Alterado
 
 - Os documentos no OpenObserve (logs e traces) ganham `lhamalog_batch_id` e `lhamalog_record_id` (UUID v3

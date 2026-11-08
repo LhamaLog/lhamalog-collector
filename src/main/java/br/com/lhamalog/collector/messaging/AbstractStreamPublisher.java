@@ -1,4 +1,4 @@
-// Author: LhamaLog Desenvolvimento (IA) - LLT-182
+// Author: LhamaLog Desenvolvimento (IA) - LLT-184
 package br.com.lhamalog.collector.messaging;
 
 import java.nio.charset.StandardCharsets;
@@ -8,6 +8,8 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataAccessException;
 import org.springframework.data.redis.connection.RedisStreamCommands.XAddOptions;
 import org.springframework.data.redis.connection.stream.StreamRecords;
@@ -17,15 +19,17 @@ import tools.jackson.core.JacksonException;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
- * Publisher side of the Redis Streams messaging (ADR draft, reused from the messaging POC). A subclass names
- * its domain, origin, event and schema version; {@link #publish(List)} is final so every stream gets the same
- * envelope and the same trimming: {@code XADD <stream> MAXLEN ~ <limit> * field value ...}.
+ * Publisher side of the Redis Streams messaging (ADR draft). A subclass names its domain, origin, event and
+ * schema version; {@link #publish(List)} is final so every stream gets the same envelope, trimming, internal
+ * retry and DLQ policy (LLT-184).
  *
- * <p>All entries of one call go in a single pipeline. If Redis does not confirm every entry the call throws
- * {@link MessagePublishException}; entries already written stay, and a retry writes them again with the same
- * {@code idempotencyId}, which the consumer drops.
+ * <p>All entries of one call go in a single pipeline. Transient Redis failures are retried with backoff. When
+ * attempts are exhausted the envelopes are written to the domain DLQ; a confirmed DLQ write counts as publish
+ * success for the caller. Only when the DLQ also fails does this throw {@link MessagePublishException}.
  */
 public abstract class AbstractStreamPublisher<T> {
+
+	private static final Logger log = LoggerFactory.getLogger(AbstractStreamPublisher.class);
 
 	private final StringRedisTemplate redis;
 
@@ -33,17 +37,34 @@ public abstract class AbstractStreamPublisher<T> {
 
 	private final Clock clock;
 
+	private final MessagingProperties properties;
+
+	private final PublishSleeper sleeper;
+
 	private final String stream;
 
 	private final long maxLen;
 
+	private final String dlqStream;
+
+	private final long dlqMaxLen;
+
 	protected AbstractStreamPublisher(StringRedisTemplate redis, JsonMapper json, MessagingProperties properties,
 			Clock clock) {
+		this(redis, json, properties, clock, Thread::sleep);
+	}
+
+	protected AbstractStreamPublisher(StringRedisTemplate redis, JsonMapper json, MessagingProperties properties,
+			Clock clock, PublishSleeper sleeper) {
 		this.redis = redis;
 		this.json = json;
 		this.clock = clock;
+		this.properties = properties;
+		this.sleeper = sleeper;
 		this.stream = StreamNames.stream(domain());
 		this.maxLen = properties.maxLenFor(domain());
+		this.dlqStream = StreamNames.dlq(domain());
+		this.dlqMaxLen = properties.maxLenFor(domain() + ":dlq");
 	}
 
 	/** Domain of the stream, e.g. {@code logs} for {@code lhamalog:stream:logs}. */
@@ -63,6 +84,14 @@ public abstract class AbstractStreamPublisher<T> {
 		return maxLen;
 	}
 
+	public final String dlqStream() {
+		return dlqStream;
+	}
+
+	public final long dlqMaxLen() {
+		return dlqMaxLen;
+	}
+
 	public final List<MessageEnvelope> publish(List<OutboundMessage<T>> messages) {
 		if (messages.isEmpty()) {
 			return List.of();
@@ -74,11 +103,77 @@ public abstract class AbstractStreamPublisher<T> {
 					message.metadata(), toJson(message.body())));
 		}
 		List<Map<String, String>> entries = envelopes.stream().map(this::fields).toList();
-		XAddOptions options = XAddOptions.maxlen(maxLen).approximateTrimming(true);
+		int maxAttempts = properties.publishMaxAttempts();
+		long backoffMs = properties.publishBackoffInitialMs();
+		double multiplier = properties.publishBackoffMultiplier();
+		long ceilingMs = properties.publishBackoffCeilingMs();
+		long waitedMs = 0L;
+		MessagePublishException lastFailure = null;
+		for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+			try {
+				xadd(stream, maxLen, entries);
+				if (attempt > 1) {
+					log.info("Published to {} after {} attempts", stream, attempt);
+				}
+				return List.copyOf(envelopes);
+			}
+			catch (MessagePublishException ex) {
+				lastFailure = ex;
+				log.warn("Publish attempt {}/{} failed for {}: {}", attempt, maxAttempts, stream, formatError(ex));
+				if (attempt == maxAttempts) {
+					break;
+				}
+				long sleepMs = Math.min(backoffMs, Math.max(0L, ceilingMs - waitedMs));
+				if (sleepMs > 0L) {
+					try {
+						sleeper.sleep(sleepMs);
+					}
+					catch (InterruptedException interrupted) {
+						Thread.currentThread().interrupt();
+						throw new MessagePublishException("Interrupted while backing off before retry for " + stream,
+								interrupted);
+					}
+					waitedMs += sleepMs;
+				}
+				long next = (long) Math.ceil(backoffMs * multiplier);
+				backoffMs = Math.max(1L, next);
+			}
+		}
+		try {
+			writeDlq(envelopes, maxAttempts, lastFailure);
+			log.error("Moved {} message(s) to DLQ {} after {} failed attempts to {}", envelopes.size(), dlqStream,
+					maxAttempts, stream);
+			return List.copyOf(envelopes);
+		}
+		catch (MessagePublishException dlqFailure) {
+			log.error("DLQ write failed for {} after {} attempts to {}: {}", dlqStream, maxAttempts, stream,
+					formatError(dlqFailure));
+			throw new MessagePublishException(
+					"Redis did not accept the entries for " + stream + " and DLQ " + dlqStream, dlqFailure);
+		}
+	}
+
+	private void writeDlq(List<MessageEnvelope> envelopes, int attempts, MessagePublishException lastFailure) {
+		String failedAt = DateTimeFormatter.ISO_INSTANT.format(clock.instant());
+		String lastError = formatError(lastFailure);
+		List<Map<String, String>> entries = new ArrayList<>(envelopes.size());
+		for (MessageEnvelope envelope : envelopes) {
+			Map<String, String> entry = new LinkedHashMap<>(fields(envelope));
+			entry.put("targetStream", stream);
+			entry.put("attempts", Integer.toString(attempts));
+			entry.put("lastError", lastError);
+			entry.put("failedAt", failedAt);
+			entries.add(entry);
+		}
+		xadd(dlqStream, dlqMaxLen, entries);
+	}
+
+	private void xadd(String target, long maxlen, List<Map<String, String>> entries) {
+		XAddOptions options = XAddOptions.maxlen(maxlen).approximateTrimming(true);
 		List<Object> ids;
 		try {
 			ids = redis.executePipelined((RedisCallback<Object>) connection -> {
-				byte[] key = stream.getBytes(StandardCharsets.UTF_8);
+				byte[] key = target.getBytes(StandardCharsets.UTF_8);
 				for (Map<String, String> entry : entries) {
 					Map<byte[], byte[]> raw = new LinkedHashMap<>();
 					entry.forEach((field, value) -> raw.put(field.getBytes(StandardCharsets.UTF_8),
@@ -89,15 +184,15 @@ public abstract class AbstractStreamPublisher<T> {
 			});
 		}
 		catch (DataAccessException ex) {
-			throw new MessagePublishException("Redis did not accept the entries for " + stream, ex);
+			throw new MessagePublishException("Redis did not accept the entries for " + target, ex);
 		}
-		if (ids.size() != entries.size() || ids.stream().anyMatch(id -> id == null || id instanceof Throwable)) {
+		if (ids == null || ids.size() != entries.size()
+				|| ids.stream().anyMatch(id -> id == null || id instanceof Throwable)) {
+			long confirmed = ids == null ? 0L
+					: ids.stream().filter(id -> id != null && !(id instanceof Throwable)).count();
 			throw new MessagePublishException(
-					"Redis confirmed " + ids.stream().filter(id -> id != null && !(id instanceof Throwable)).count()
-							+ " of " + entries.size() + " entries for " + stream,
-					null);
+					"Redis confirmed " + confirmed + " of " + entries.size() + " entries for " + target, null);
 		}
-		return List.copyOf(envelopes);
 	}
 
 	private Map<String, String> fields(MessageEnvelope envelope) {
@@ -110,6 +205,24 @@ public abstract class AbstractStreamPublisher<T> {
 		fields.put("metadata", toJson(new LinkedHashMap<>(envelope.metadata())));
 		fields.put("body", envelope.body());
 		return fields;
+	}
+
+	static String formatError(Throwable error) {
+		if (error == null) {
+			return "unknown";
+		}
+		String name = error.getClass().getSimpleName();
+		String message = error.getMessage();
+		if (message == null || message.isBlank()) {
+			return name;
+		}
+		String sanitized = message
+			.replaceAll("(?i)(\\b[a-z][a-z0-9+.-]*://[^\\s/@:]+:)[^@\\s]+@", "$1***@")
+			.replaceAll(
+					"(?i)(\\b(?:password|passwd|senha|secret|token|apikey|api_key|authorization)\\b[\"']?\\s*(?:=|:)\\s*)(?:\"(?:\\\\.|[^\"])*\"|'(?:\\\\.|[^'])*'|Bearer\\s+[^\\s,;]+|[^\\s,;}&]+)",
+					"$1***")
+			.replaceAll("(?i)\\bBearer\\s+[^\\s,;]+", "Bearer ***");
+		return name + ": " + sanitized;
 	}
 
 	private String toJson(Object value) {
