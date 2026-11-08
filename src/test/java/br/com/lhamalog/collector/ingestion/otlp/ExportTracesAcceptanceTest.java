@@ -39,6 +39,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.core.env.Environment;
+import org.springframework.data.domain.Range;
+import org.springframework.data.redis.connection.stream.MapRecord;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import tools.jackson.databind.JsonNode;
 
@@ -48,6 +50,8 @@ import tools.jackson.databind.JsonNode;
 class ExportTracesAcceptanceTest {
 
 	private static final SecureRandom RANDOM = new SecureRandom();
+
+	private static final tools.jackson.databind.json.JsonMapper JSON = tools.jackson.databind.json.JsonMapper.builder().build();
 
 	@Autowired
 	MongoTemplate mongo;
@@ -63,6 +67,9 @@ class ExportTracesAcceptanceTest {
 
 	@Autowired
 	Environment env;
+
+	@Autowired
+	org.springframework.data.redis.core.StringRedisTemplate redis;
 
 	private static ByteString randomId(int size) {
 		byte[] bytes = new byte[size];
@@ -118,6 +125,18 @@ class ExportTracesAcceptanceTest {
 			assertThat(text(documents.getFirst(), "productId")).isEqualTo(product.productId());
 			assertThat(text(documents.getFirst(), "tenantId")).isEqualTo(product.tenantId());
 			assertThat(text(documents.getFirst(), "parentSpanId")).hasSize(16);
+			String batchId = text(documents.getFirst(), "lhamalog_batch_id");
+			List<tools.jackson.databind.JsonNode> references = redis.opsForStream()
+				.range("lhamalog:stream:traces", org.springframework.data.domain.Range.unbounded())
+				.stream()
+				.map(entry -> JSON.readTree((String) entry.getValue().get("body")))
+				.filter(body -> batchId.equals(body.path("openobserve").path("batchId").asString(null)))
+				.toList();
+			assertThat(references).hasSize(1);
+			assertThat(references.getFirst().path("signal").asString()).isEqualTo("TRACES");
+			assertThat(references.getFirst().path("openobserve").path("recordId").asString())
+				.isEqualTo(text(documents.getFirst(), "lhamalog_record_id"));
+			assertThat(references.getFirst().toString()).doesNotContain(name);
 		}
 	}
 
@@ -168,6 +187,51 @@ class ExportTracesAcceptanceTest {
 			http.stop();
 			grpc.stop();
 		}
+	}
+
+	@Test
+	void resentBatchKeepsBatchIdIdempotencyIdAndRecordId() throws Exception {
+		SeededProduct product = OtlpAcceptanceSupport.seedProduct(mongo);
+		String name = "resend-span-" + UUID.randomUUID();
+		long start = OtlpAcceptanceSupport.nowNanos();
+		Span fixed = Span.newBuilder()
+			.setTraceId(ByteString.copyFrom(new byte[] { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16 }))
+			.setSpanId(ByteString.copyFrom(new byte[] { 1, 2, 3, 4, 5, 6, 7, 8 }))
+			.setParentSpanId(ByteString.copyFrom(new byte[] { 9, 10, 11, 12, 13, 14, 15, 16 }))
+			.setName(name)
+			.setStartTimeUnixNano(start)
+			.setEndTimeUnixNano(start + 1_000_000L)
+			.build();
+		byte[] body = batch(fixed).toByteArray();
+		assertThat(postProtobuf(httpServer.getPort(), "/v1/traces", product.token(), body).statusCode()).isEqualTo(200);
+		assertThat(postProtobuf(httpServer.getPort(), "/v1/traces", product.token(), body).statusCode()).isEqualTo(200);
+
+		long end = System.nanoTime() + java.time.Duration.ofSeconds(60).toNanos();
+		List<JsonNode> documents = awaitDocuments(env, "traces", "name", name);
+		while (documents.size() < 2 && System.nanoTime() < end) {
+			Thread.sleep(1000);
+			documents = OtlpAcceptanceSupport.search(env, "traces", "name", name);
+		}
+		assertThat(documents).hasSize(2);
+		assertThat(text(documents.get(0), "lhamalog_record_id")).isEqualTo(text(documents.get(1), "lhamalog_record_id"));
+		String batchId = text(documents.get(0), "lhamalog_batch_id");
+		String recordId = text(documents.get(0), "lhamalog_record_id");
+		assertThat(text(documents.get(1), "lhamalog_batch_id")).isEqualTo(batchId);
+
+		List<MapRecord<String, Object, Object>> entries = redis.opsForStream()
+			.range("lhamalog:stream:traces", Range.unbounded())
+			.stream()
+			.filter(entry -> batchId.equals(JSON.readTree((String) entry.getValue().get("body"))
+				.path("openobserve")
+				.path("batchId")
+				.asString(null)))
+			.toList();
+		assertThat(entries).hasSize(2);
+		assertThat(entries).allSatisfy(entry -> assertThat(entry.getValue().get("idempotencyId")).isEqualTo(batchId));
+		assertThat(entries).allSatisfy(entry -> assertThat(JSON.readTree((String) entry.getValue().get("body"))
+			.path("openobserve")
+			.path("recordId")
+			.asString()).isEqualTo(recordId));
 	}
 
 }

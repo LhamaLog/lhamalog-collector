@@ -100,6 +100,41 @@ class OpenObserveSinkTest {
 	}
 
 	@Test
+	void storeWritesBatchAndRecordIdsAndReturnsTheLocation() {
+		answer = "{\"code\":200,\"status\":[{\"name\":\"x\",\"successful\":2,\"failed\":0}]}";
+		LogRecord early = LogRecord.newBuilder().setTimeUnixNano(1_000_000_000L).build();
+		LogRecord late = LogRecord.newBuilder().setTimeUnixNano(5_000_000_000L).build();
+		StoredBatch batch = new OpenObserveLogsSink(client, "logs", CLOCK).store("t", "p",
+				List.of(Scoped.of(early), Scoped.of(late)));
+		JsonNode docs = JsonMapper.builder().build().readTree(lastBody.get());
+		assertThat(docs.get(0).get("lhamalog_batch_id").asString()).isEqualTo(batch.batchId());
+		assertThat(docs.get(1).get("lhamalog_batch_id").asString()).isEqualTo(batch.batchId());
+		assertThat(batch.recordIds()).containsExactly(docs.get(0).get("lhamalog_record_id").asString(),
+				docs.get(1).get("lhamalog_record_id").asString());
+		assertThat(batch.singleRecordId()).isNull();
+		assertThat(batch.signal()).isEqualTo(Signal.LOGS);
+		assertThat(batch.organization()).isEqualTo("lhamalog");
+		assertThat(batch.stream()).isEqualTo("logs");
+		assertThat(batch.minTimestampMicros()).isEqualTo(1_000_000L);
+		assertThat(batch.maxTimestampMicros()).isEqualTo(5_000_000L);
+		assertThat(batch.receivedAt()).isEqualTo("2026-10-31T12:00:00Z");
+	}
+
+	@Test
+	void singleSpanPointsStraightAtTheRecord() {
+		Span span = Span.newBuilder()
+			.setTraceId(ByteString.fromHex("5b8efff798038103d269b633813fc60c"))
+			.setSpanId(ByteString.fromHex("eee19b7ec3c1b174"))
+			.setStartTimeUnixNano(2_000_000)
+			.build();
+		StoredBatch batch = new OpenObserveTracesSink(client, "traces", CLOCK).store("t", "p", List.of(Scoped.of(span)));
+		JsonNode doc = first(lastBody.get());
+		assertThat(batch.singleRecordId()).isEqualTo(doc.get("lhamalog_record_id").asString());
+		assertThat(batch.signal()).isEqualTo(Signal.TRACES);
+		assertThat(batch.minTimestampMicros()).isEqualTo(2_000L).isEqualTo(batch.maxTimestampMicros());
+	}
+
+	@Test
 	void logWithoutTimeUsesAcceptInstant() {
 		new OpenObserveLogsSink(client, "logs", CLOCK).deliver("t", "p", List.of(Scoped.of(LogRecord.getDefaultInstance())));
 		JsonNode doc = first(lastBody.get());
@@ -252,6 +287,27 @@ class OpenObserveSinkTest {
 		assertThat(doc.get("serviceName").asString()).isEqualTo("checkout");
 		assertThat(doc.get("scopeName").asString()).isEqualTo("io.lib");
 		assertThat(doc.get("scopeVersion").asString()).isEqualTo("2.1");
+	}
+
+	@Test
+	void emptyBatchDoesNotCallOpenObserve() {
+		StoredBatch logs = new OpenObserveLogsSink(client, "logs", CLOCK).store("t", "p", List.of());
+		StoredBatch traces = new OpenObserveTracesSink(client, "traces", CLOCK).store("t", "p", List.of());
+		assertThat(lastPath.get()).isNull();
+		assertThat(logs.recordIds()).isEmpty();
+		assertThat(traces.recordIds()).isEmpty();
+		assertThat(logs.minTimestampMicros()).isEqualTo(CLOCK.instant().toEpochMilli() * 1000);
+	}
+
+	@Test
+	void batchWithoutTimeUnixNanoHasTheRangeOfTheAcceptInstant() {
+		answer = "{\"code\":200,\"status\":[{\"name\":\"x\",\"successful\":2,\"failed\":0}]}";
+		StoredBatch batch = new OpenObserveLogsSink(client, "logs", CLOCK).store("t", "p",
+				List.of(Scoped.of(LogRecord.getDefaultInstance()), Scoped.of(LogRecord.newBuilder().setSeverityNumberValue(9).build())));
+		long accept = CLOCK.instant().toEpochMilli() * 1000;
+		assertThat(batch.minTimestampMicros()).isEqualTo(accept);
+		assertThat(batch.maxTimestampMicros()).isEqualTo(accept);
+		assertThat(batch.receivedAt()).isEqualTo("2026-10-31T12:00:00Z");
 	}
 
 }
