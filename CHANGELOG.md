@@ -9,10 +9,14 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 
 ### Adicionado (LLT-184)
 
-- Retry interno de publicação no Redis Streams: até 3 tentativas totais, com esperas de 100 e 200 ms, e DLQ
+- Retry interno de publicação no Redis Streams: até 3 tentativas totais, com esperas padrão de 100 e 200 ms.
+  O teto de backoff (padrão 2000 ms) limita só essas esperas, sem deadline da requisição nem do `XADD`. DLQ
   por domínio quando as tentativas se esgotam.
 - DLQs `lhamalog:stream:logs:dlq` e `lhamalog:stream:traces:dlq`, preservando o envelope original e registrando
-  destino, tentativas, último erro sanitizado e instante da falha.
+  destino, tentativas, último erro com redação de padrões conhecidos (não cobre todo segredo arbitrário) e
+  instante da falha. Confirmação da DLQ responde sucesso ao exportador e não é processamento final.
+  `log.ingested` e `trace.ingested` permanecem na versão 1. `MAXLEN ~` pode descartar entradas antigas sem
+  consumo.
 - Injeção Spring de `MessagingProperties` e `JsonMapper` em `OtlpReceiverConfiguration`.
 
 ### Alterado

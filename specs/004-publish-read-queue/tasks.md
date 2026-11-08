@@ -79,3 +79,21 @@ Phase 1 e 2 antes das histórias. US1 e US2 dependem de T005. US3 é regressão 
 ## Parallel opportunities
 
 T001/T002/T003/T006 em paralelo após o desenho. T011/T012/T014 em paralelo após T005.
+
+## Phase 7: Pendências futuras (abertas, sem implementar)
+
+Tasks abertas. Não fazem parte da entrega atual e não autorizam mudança de código, teste novo, deadline,
+regex nem atualização do Jira nesta rodada. T001–T016 permanecem como estão, inclusive a T016.
+
+- [ ] T017 Definir política operacional da DLQ: dono, retenção, persistência (AOF/RDB), monitoramento/alertas
+  e o efeito do `MAXLEN ~` (pode descartar entradas antigas sem consumo; não é retenção temporal nem
+  durabilidade). Não escolher dono nem política até haver decisão.
+- [ ] T018 Teste de aceitação E2E HTTP e gRPC: principal falha, DLQ confirma, exportador recebe 200 / OK, e o
+  sucesso é só a confirmação da DLQ, não o processamento final.
+- [ ] T019 Teste de interrupção e de shutdown durante retry/backoff. Validação pendente; não alterar o código
+  até haver decisão. Não tratar 503 como garantido se o processo morrer antes de responder.
+- [ ] T020 Teste de duplicação: timeout ambíguo pode deixar referência no stream principal e na DLQ. O
+  consumidor deve deduplicar por `idempotencyId` = `batchId`. Não afirmar que a deduplicação do consumidor
+  foi verificada.
+- [ ] T021 Reprocessador da DLQ (fora do escopo do LLT-184).
+- [ ] T022 Atualização futura do Jira LLT-184. Não executar nesta entrega.

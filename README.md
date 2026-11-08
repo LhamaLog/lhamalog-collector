@@ -158,16 +158,22 @@ No local as portas são 4328/4327 porque 4318/4317 já são do OpenTelemetry Col
 
 ## Retry e DLQ (LLT-184)
 
-O collector faz até 3 tentativas totais para publicar cada referência no Redis Stream, com esperas de 100 e
-200 ms entre elas (a espera de 400 ms só ocorreria com 4 tentativas). Depois disso, grava o envelope original
-na DLQ do domínio: `lhamalog:stream:logs:dlq` ou `lhamalog:stream:traces:dlq`. A DLQ inclui `targetStream`,
-`attempts`, `lastError` sanitizado e `failedAt`; o formato dos eventos `log.ingested` e `trace.ingested`
-permanece no `schemaVersion` 1 e continua sendo uma referência por lote.
+O collector faz até 3 tentativas totais para publicar cada referência no Redis Stream, com esperas padrão de
+100 e 200 ms entre elas (a espera de 400 ms só ocorreria com 4 tentativas). O teto
+`LHAMALOG_MESSAGING_PUBLISH_BACKOFF_CEILING_MS` (padrão 2000) limita cada espera de backoff e a soma dessas
+esperas. Não há deadline da requisição nem do `XADD`; o tempo do comando Redis fica fora desse teto. Depois
+disso, grava o envelope original na DLQ do domínio: `lhamalog:stream:logs:dlq` ou
+`lhamalog:stream:traces:dlq`. A DLQ inclui `targetStream`, `attempts`, `lastError` e `failedAt`. `lastError`
+redige padrões conhecidos de credencial e não garante ausência de todo segredo arbitrário. Os eventos
+`log.ingested` e `trace.ingested` permanecem no `schemaVersion` 1 e continuam sendo uma referência por lote.
 
-Se a DLQ confirmar, a resposta ao exportador é sucesso. A resposta é 503 + `Retry-After: 5` (gRPC
-`UNAVAILABLE`) somente quando a DLQ também falha. Como principal e DLQ usam a mesma instância Redis, Redis
-totalmente indisponível também impede a DLQ: nesse caso a resposta é 503 e a durabilidade depende do reenvio
-do cliente.
+Se a DLQ confirmar, a resposta ao exportador é sucesso (HTTP 200 / gRPC OK). Esse sucesso confirma a escrita
+na DLQ e não é o processamento final. A resposta é 503 + `Retry-After: 5` (gRPC `UNAVAILABLE`) quando a DLQ
+também falha e o processo ainda responde. Principal e DLQ usam a mesma instância Redis, então Redis
+totalmente indisponível também impede a DLQ. `MAXLEN ~` pode descartar entradas mais antigas sem consumo e
+não garante retenção nem durabilidade. Um timeout ambíguo pode deixar referência no principal e na DLQ; o
+consumidor deve deduplicar por `idempotencyId` = `batchId`. Se o processo morrer antes de responder, o 503
+não é garantido. Dono, retenção, persistência e alertas da DLQ ainda não estão definidos.
 
 ## Log de inicialização
 

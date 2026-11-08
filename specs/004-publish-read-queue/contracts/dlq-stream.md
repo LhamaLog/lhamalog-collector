@@ -46,12 +46,26 @@ XADD lhamalog:stream:traces:dlq MAXLEN ~ <N> * idempotencyId <batchId> event tra
 |---|---|---|
 | Gravado e publicado no stream principal | 200 | OK |
 | Principal falhou, DLQ confirmou | 200 | OK |
-| Principal e DLQ falharam | 503, `Retry-After: 5` | `UNAVAILABLE` |
+| Principal e DLQ falharam e o processo respondeu | 503, `Retry-After: 5` | `UNAVAILABLE` |
+| Processo morreu antes de responder | sem garantia de 503 | sem garantia de `UNAVAILABLE` |
 | Demais casos | como no contrato 002 / 001, sem publicar | |
 
-## Garantias
+200 / OK depois da DLQ confirma a escrita na fila de erro. Não significa processamento final pela
+Varredura/Finder. Principal e DLQ usam a mesma instância Redis: os dois indisponíveis caem na linha de 503
+somente se o processo ainda responder.
 
-- Entrega pelo menos uma vez: sucesso implica entrada no principal **ou** na DLQ.
-- Mesmo `idempotencyId` no principal, nos retries e na DLQ.
-- `lastError` nunca carrega senha, token ou URI com credencial.
+## Garantias e limites
+
+- Sucesso da publicação implica entrada confirmada no principal **ou** na DLQ naquele momento. `MAXLEN ~` pode
+  descartar depois as entradas mais antigas sem consumo; isso não é retenção temporal nem durabilidade.
+- Mesmo `idempotencyId` no principal, nos retries e na DLQ. Timeout ambíguo pode deixar referência nos dois.
+  O consumidor deve deduplicar por `idempotencyId` = `batchId`. Esta entrega não verifica essa deduplicação.
+- `lastError` recebe redação de padrões conhecidos (userinfo de URI, rótulos `password` / `passwd` / `senha` /
+  `secret` / `token` / `apikey` / `api_key` / `authorization` e prefixo `Bearer`). Isso não garante ausência de
+  todo segredo arbitrário.
+- Não há deadline da requisição nem do `XADD`. O teto de backoff (padrão 2000 ms) limita só as esperas entre
+  as 3 tentativas (padrão 100 ms e 200 ms), cada uma e a soma.
+- Dono, retenção, persistência AOF/RDB, monitoramento e alertas da DLQ não estão definidos. `N` padrão é
+  100000 e o corte é aproximado.
 - Reprocessamento automático da DLQ está fora do escopo.
+- `event` permanece `log.ingested` ou `trace.ingested`, `schemaVersion` 1.

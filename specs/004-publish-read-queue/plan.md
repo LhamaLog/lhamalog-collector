@@ -10,8 +10,10 @@ Acrescentar retry interno com backoff e DLQ por domínio à publicação já exi
 (`AbstractStreamPublisher` / `TelemetryIngestedPublisher`). Depois de 3 tentativas totais de `XADD` no stream
 principal (`lhamalog:stream:logs` / `lhamalog:stream:traces`), o Collector grava o envelope original na DLQ
 (`lhamalog:stream:logs:dlq` / `lhamalog:stream:traces:dlq`). Se a DLQ confirmar, o sink trata como sucesso
-(exportador 200 / OK); se a DLQ também falhar, permanece `DestinationUnavailable` (503 / `UNAVAILABLE`).
-Formato do stream principal inalterado (sem bump de schema). Decisões em [research.md](research.md).
+(exportador 200 / OK). Esse 200 / OK confirma a escrita na DLQ e não é processamento final. Se a DLQ também
+falhar e o processo responder, permanece `DestinationUnavailable` (503 `Retry-After: 5` / `UNAVAILABLE`).
+Principal e DLQ estão na mesma instância Redis. Formato do stream principal inalterado (`log.ingested` e
+`trace.ingested` continuam v1). Decisões e limites em [research.md](research.md).
 
 ## Technical Context
 
@@ -27,13 +29,16 @@ Formato do stream principal inalterado (sem bump de schema). Decisões em [resea
 
 **Project Type**: web-service (receptor OTLP)
 
-**Performance Goals**: com 3 tentativas totais, esperas de 100 e 200 ms (400 ms só com 4 tentativas), retry
-total de espera ≤ ~2 s por publicação; um XADD (pipeline) por tentativa
+**Performance Goals**: 3 tentativas totais, esperas padrão de 100 e 200 ms (400 ms só com 4 tentativas). O teto
+`backoff-ceiling-ms` (padrão 2000) limita cada espera de backoff e a soma dessas esperas. Não há deadline da
+requisição nem do `XADD`. Um XADD (pipeline) por tentativa; a duração do comando Redis fica fora do teto.
 
-**Constraints**: sem segredo em log/DLQ; Core intocado; não editar `infra/local/.env`; não alterar specs/001 nem
-specs/003
+**Constraints**: `lastError` e logs aplicam redação de padrões conhecidos e não garantem ausência de todo
+segredo arbitrário; Core intocado; não editar `infra/local/.env`; não alterar specs/001 nem specs/003
 
-**Scale/Scope**: MAXLEN ~ 100000 nos streams principais e nas DLQs; overrides por `LHAMALOG_MESSAGING_*`
+**Scale/Scope**: `MAXLEN ~ 100000` nos streams principais e nas DLQs pode descartar entradas mais antigas sem
+consumo; não é retenção temporal nem durabilidade. Dono, persistência AOF/RDB, monitoramento e alertas da DLQ
+indefinidos. Overrides por `LHAMALOG_MESSAGING_*`
 
 ## Constitution Check
 
@@ -43,7 +48,7 @@ specs/003
 | II. IA pode implementar 100% | A IA implementa todas as tasks; decisões em research.md, plan.md e tasks.md; sem marca de autoria por task |
 | III. Testes antes do merge | Unitários (retry/DLQ/sucesso) e integração Redis; `mvnw clean verify` local |
 | IV. Inglês no código, português na doc | Código e mensagens em inglês; artefatos em pt-BR |
-| V. Segredos fora do código | `lastError` só classe+mensagem; overrides só por env; `.env.example` sem segredo |
+| V. Segredos fora do código | `lastError` é classe + mensagem com redação de padrões conhecidos, sem garantia contra segredo arbitrário; overrides só por env; `.env.example` sem segredo |
 
 Sem violações. Revisão depois do design: sem mudanças.
 
@@ -89,7 +94,8 @@ CHANGELOG.md
 ```
 
 **Structure Decision**: estender o núcleo `messaging` (LLT-182). Sem pacote novo; sinks só documentam a nova
-semântica de sucesso após DLQ (não precisam de lógica extra se `publish` deixar de lançar quando a DLQ ok).
+semântica de sucesso após a DLQ confirmar (confirmação da escrita, não processamento final). Não precisam de
+lógica extra se `publish` deixar de lançar quando a DLQ ok.
 
 ## Complexity Tracking
 
