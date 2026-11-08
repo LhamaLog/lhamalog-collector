@@ -95,7 +95,8 @@ Depois de autenticado, validado e guardado, cada lote aceito vira um evento `log
 
 ### Edge Cases
 
-- Dois logs idênticos no mesmo lote: são eventos distintos, com identificadores distintos.
+- Dois logs idênticos no mesmo lote: são registros distintos, com `recordIds` distintos, dentro da mesma
+  referência do lote (um único evento na fila).
 - Reenvio após falha da fila: o armazenamento recebe o lote de novo (entrega pelo menos uma vez) e a
   Varredura descarta os eventos repetidos pelo identificador.
 - Recusa parcial pelo armazenamento: não dá para saber quais registros foram guardados, então nada é
@@ -114,7 +115,7 @@ Depois de autenticado, validado e guardado, cada lote aceito vira um evento `log
   ser preservados no armazenamento (OpenObserve). A fila MUST NOT levar registros OTel, conteúdo de log ou
   span. O único XADD MUST publicar a referência integral do subconjunto aceito ou não publicar nada; nunca
   uma referência a um lote parcialmente publicado.
-- **FR-004**: Cada lote aceito e guardado MUST ser publicado como uma referência: `log.ingested` (versão 2)
+- **FR-004**: Cada lote aceito e guardado MUST ser publicado como uma referência: `log.ingested` (versão 1)
   em `lhamalog:stream:logs` ou `trace.ingested` (versão 1) em `lhamalog:stream:traces`, origem `collector`,
   com `tenantId` apenas nos metadados, junto de `productId`, `correlationId` e `traceId` quando o lote tem
   um só trace. Campos em contracts/log-ingested-stream.md.

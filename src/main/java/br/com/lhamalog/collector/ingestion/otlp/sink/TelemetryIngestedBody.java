@@ -5,7 +5,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Body of {@code log.ingested} (schema 2) and {@code trace.ingested} (schema 1): only a reference to the batch
+ * Body of {@code log.ingested} (schema 1) and {@code trace.ingested} (schema 1): only a reference to the batch
  * in OpenObserve, never the log or span content. {@code tenantId} and {@code productId} travel in the
  * envelope metadata; {@code productId} is repeated here for the Varredura to group by product.
  */

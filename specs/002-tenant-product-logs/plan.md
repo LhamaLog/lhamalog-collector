@@ -10,7 +10,7 @@
 
 Garantir e testar que todo log aceito leva `tenantId` e `productId` do token e preserva o contexto OTel no
 OpenObserve, e publicar uma referência por lote aceito no Redis Stream `lhamalog:stream:logs` como evento
-`log.ingested` v2 (traces em `lhamalog:stream:traces`, `trace.ingested` v1), depois da
+`log.ingested` v1 (traces em `lhamalog:stream:traces`, `trace.ingested` v1), depois da
 autenticação, da validação e da gravação no OpenObserve. A publicação usa o núcleo de mensageria da POC
 (`AbstractStreamPublisher<T>`, XADD `MAXLEN ~ 100000`). Falha do Redis responde 503 / `UNAVAILABLE`
 para nova tentativa; o `idempotencyId` é o `batchId` determinístico do lote. A fila não leva conteúdo nem

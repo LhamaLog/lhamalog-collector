@@ -9,7 +9,7 @@ mensageria com Redis Streams (status Proposta). Revisão 2026-11-02: o corpo é 
 
 ```text
 XADD lhamalog:stream:logs   MAXLEN ~ <N> * idempotencyId <batchId> event log.ingested   origin collector
-     schemaVersion 2 publishedAt <iso-utc> metadata <json> body <json>
+     schemaVersion 1 publishedAt <iso-utc> metadata <json> body <json>
 XADD lhamalog:stream:traces MAXLEN ~ <N> * idempotencyId <batchId> event trace.ingested origin collector
      schemaVersion 1 publishedAt <iso-utc> metadata <json> body <json>
 ```
@@ -25,7 +25,7 @@ XADD lhamalog:stream:traces MAXLEN ~ <N> * idempotencyId <batchId> event trace.i
   "idempotencyId": "0b8e5f3a-1c2d-3e4f-9a8b-7c6d5e4f3a2b",
   "event": "log.ingested",
   "origin": "collector",
-  "schemaVersion": "2",
+  "schemaVersion": "1",
   "publishedAt": "2026-11-01T15:00:00Z",
   "metadata": {"tenantId": "tenant-1", "productId": "product-a", "correlationId": "1b4e...", "traceId": "0af7651916cd43dd8448eb211c80319c"},
   "body": {

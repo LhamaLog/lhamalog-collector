@@ -33,7 +33,7 @@
 | Todos os registros inválidos | 400 / `INVALID_ARGUMENT` | Não |
 | OpenObserve indisponível | 503 / `UNAVAILABLE` + Retry-After | Não |
 | OpenObserve recusa algum registro | 400 ou `partial_success` | Não |
-| Redis indisponível ou sem confirmar todas as entradas | 503 / `UNAVAILABLE`, Retry-After 5 s | Parcial possível |
+| Redis indisponível ou sem confirmar todas as entradas | 503 / `UNAVAILABLE`, Retry-After 5 s | Sem publicação parcial: XADD único da referência (em falha ambígua de rede a entrada pode ter sido gravada; reenvio deduplicado pelo `idempotencyId`) |
 | Tudo confirmado | 200 / OK (ou `partial_success` dos inválidos) | Sim |
 
 - Falha do Redis vira `SinkUnavailableException`, que o `BatchIngestion` já traduz para
@@ -98,8 +98,9 @@
 
 ## D10. Nomes de evento e streams
 
-- Primeiro consumo (collector): `log.ingested` (mantém o nome; `schemaVersion` sobe para 2 por mudança
-  incompatível do corpo) e `trace.ingested` (versão 1). O sinal no nome deixa o tipo claro sem ler o corpo.
+- Primeiro consumo (collector): `log.ingested` (versão 1) e `trace.ingested` (versão 1). As decisões anteriores
+  D3/D9 foram consolidadas no primeiro contrato v1 pré-produção, sem migração. O sinal no nome deixa o tipo claro
+  sem ler o corpo.
 - Depois da Varredura (varredura de dados sensíveis e validação de prompt-injection): `log.checked` e
   `trace.checked`, publicados fora do collector; só documentado aqui.
 - **Dois streams**: `lhamalog:stream:logs` e `lhamalog:stream:traces`. Segue a regra

@@ -20,7 +20,7 @@ Uma entrada por lote aceito. Campos (todos texto):
 | `idempotencyId` | `batchId` (research D9) |
 | `event` | `log.ingested` ou `trace.ingested` |
 | `origin` | `collector` |
-| `schemaVersion` | `2` (logs) / `1` (traces) |
+| `schemaVersion` | `1` (logs e traces) |
 | `publishedAt` | instante ISO-8601 UTC, ex. `2026-11-01T15:00:00Z` |
 | `metadata` | JSON, ver abaixo |
 | `body` | JSON, ver abaixo |

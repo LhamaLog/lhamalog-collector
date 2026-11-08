@@ -74,6 +74,12 @@ class TelemetryIngestedPublisherTest {
 	}
 
 	@Test
+	void logAndTraceSchemaVersionsAreOne() {
+		assertThat(LogIngestedPublisher.SCHEMA_VERSION).isEqualTo(1);
+		assertThat(TraceIngestedPublisher.SCHEMA_VERSION).isEqualTo(1);
+	}
+
+	@Test
 	void metadataCarriesTokenIdsAndSingleTrace() {
 		assertThat(logs("tenant-1", INFO).metadata()).containsEntry(MetadataKeys.TENANT_ID, "tenant-1")
 			.containsEntry(MetadataKeys.PRODUCT_ID, "product-a")

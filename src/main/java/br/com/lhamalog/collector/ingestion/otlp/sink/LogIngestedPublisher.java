@@ -9,7 +9,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
- * Publishes {@code log.ingested} references to {@code lhamalog:stream:logs} (LLT-182). Schema 2: the body
+ * Publishes {@code log.ingested} references to {@code lhamalog:stream:logs} (LLT-182). Schema 1: the body
  * points to the batch in OpenObserve instead of carrying the log. Limit override:
  * {@code LHAMALOG_MESSAGING_STREAM_LOGS_MAX_LEN}.
  */
@@ -19,7 +19,7 @@ public class LogIngestedPublisher extends TelemetryIngestedPublisher<LogRecord> 
 
 	public static final String EVENT = "log.ingested";
 
-	public static final int SCHEMA_VERSION = 2;
+	public static final int SCHEMA_VERSION = 1;
 
 	public LogIngestedPublisher(StringRedisTemplate redis, JsonMapper json, MessagingProperties properties,
 			Clock clock) {

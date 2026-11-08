@@ -51,7 +51,7 @@ Código em `src/main/java/br/com/lhamalog/collector/`. Testes em `src/test/java/
 
 - [x] T014 [US2] `ingestion/otlp/sink/PublishingLogsSink.java`: grava no OpenObserve e depois publica; nada publicado se o OpenObserve falha ou recusa
 - [x] T015 [US2] Em `config/OtlpReceiverConfiguration.java`, criar o bean `LogIngestedPublisher` e envolver o `OpenObserveLogsSink`
-- [x] T016 [US2] `idempotencyId` determinístico (research D5) e teste de reenvio e de duplicatas em `LogIngestedPublisherTest.java`
+- [x] T016 [US2] `idempotencyId` determinístico (research D5) e teste de reenvio e de duplicatas em `TelemetryIngestedPublisherTest.java` (`batchAndRecordIdsAreDeterministicAndDistinctForDuplicates`)
 
 ## Phase 5: User Story 3 - Nada sem token válido ou inválido na fila (P1)
 
@@ -73,13 +73,13 @@ Código em `src/main/java/br/com/lhamalog/collector/`. Testes em `src/test/java/
 - [x] T023 Specs: spec FR-003/004/011/012, research D9-D12, data-model, contrato `log-ingested-stream.md`
 - [x] T024 `RecordIds`, `StoredBatch`, `BatchStore`, `Signal`: `OpenObserveLogsSink`/`OpenObserveTracesSink` gravam `lhamalog_batch_id` e `lhamalog_record_id` e devolvem a faixa de `_timestamp`
 - [x] T025 `Criticality` (só severidade) e `TelemetryIngestedBody`; `LogIngestedBody` removido
-- [x] T026 `TelemetryIngestedPublisher`, `LogIngestedPublisher` (v2) e `TraceIngestedPublisher` (`lhamalog:stream:traces`); `PublishingTracesSink` e beans
+- [x] T026 `TelemetryIngestedPublisher`, `LogIngestedPublisher` (v1) e `TraceIngestedPublisher` (`lhamalog:stream:traces`); `PublishingTracesSink` e beans
 - [x] T027 Testes: `TelemetryIngestedPublisherTest`, `OpenObserveSinkTest`, `PublishingLogsSinkTest`, aceite de logs e traces (referência localiza o lote; sem conteúdo)
 - [x] T028 Rodar `.\mvnw.cmd test`
 
 ## Phase 9: Revisão do PR #3 (2026-11-04)
 
-- [x] T029 Docs: README (referência por lote, `lhamalog:stream:traces`, `trace.ingested`, `LHAMALOG_MESSAGING_STREAM_TRACES_MAX_LEN`), `.env.example`, `application-local/prod.properties`, Javadoc de `TestcontainersConfiguration`, `plan.md`, `quickstart.md`, `research.md`; `CHANGELOG.md` com `log.ingested` v2 como BREAKING
+- [x] T029 Docs: README (referência por lote, `lhamalog:stream:traces`, `trace.ingested`, `LHAMALOG_MESSAGING_STREAM_TRACES_MAX_LEN`), `.env.example`, `application-local/prod.properties`, Javadoc de `TestcontainersConfiguration`, `plan.md`, `quickstart.md`, `research.md`; `CHANGELOG.md` com `log.ingested` v1
 - [x] T030 Contrato `log-ingested-stream.md`: Finder sem `size = recordCount`, deduplica por `lhamalog_record_id`; `correlationId`, `bytes` e lotes idênticos (research D13, D14)
 - [x] T031 `store()` volta cedo com lote vazio (sem chamar o OpenObserve); `BATCH_ID_FIELD`/`RECORD_ID_FIELD` só em `StoredBatch` (research D16)
 - [x] T032 [P] `PublishingTracesSinkTest`: ordem store → publish, OpenObserve fora sem publicar, Redis fora como `DestinationUnavailable`
@@ -102,4 +102,5 @@ Phase 1 e 2 antes das histórias. US1 antes de US2 (o publicador existe). US3 e 
 
 - [ ] T039 Em `src/main/java/br/com/lhamalog/collector/config/OtlpReceiverConfiguration.java`, injetar `JsonMapper` e `MessagingProperties` via Spring
 - [ ] T040 [P] Em `specs/004/`, implementar LLT-184: retry + DLQ em PR próprio
-- [ ] T041 [P] Fora do collector, garantir que Varredura/Finder consuma `log.ingested` v2 sem `size=recordCount`
+- [ ] T041 [P] Fora do collector, garantir que Varredura/Finder consuma `log.ingested` v1 sem `size=recordCount`
+- [ ] T042 [P] Futuro: E2E de lote misto verificando que a referência tem `recordCount` igual ao subconjunto aceito (sem implementar)
