@@ -17,15 +17,27 @@ import br.com.lhamalog.collector.ingestion.otlp.sink.PublishingTracesSink;
 import br.com.lhamalog.collector.ingestion.otlp.sink.TraceIngestedPublisher;
 import br.com.lhamalog.collector.ingestion.otlp.sink.TracesSink;
 import br.com.lhamalog.collector.messaging.MessagingProperties;
+import br.com.lhamalog.collector.usage.core.CoreAuthenticationProvider;
+import br.com.lhamalog.collector.usage.core.CoreUsageFactsClient;
+import br.com.lhamalog.collector.usage.core.UsageOutboxWorker;
+import br.com.lhamalog.collector.usage.core.UsageOutboxObservability;
+import br.com.lhamalog.collector.usage.domain.UsageFactFactory;
+import br.com.lhamalog.collector.usage.outbox.MongoUsageOutboxRepository;
+import br.com.lhamalog.collector.usage.outbox.UsageFactRecorder;
+import br.com.lhamalog.collector.usage.outbox.UsageAcceptanceReconciler;
+import br.com.lhamalog.collector.usage.outbox.UsageOutboxRepository;
 import com.github.benmanes.caffeine.cache.Ticker;
+import java.net.URI;
 import java.net.http.HttpClient;
 import java.time.Clock;
 import java.time.Duration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBooleanProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.data.mongodb.core.MongoOperations;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.scheduling.annotation.EnableScheduling;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
@@ -38,7 +50,80 @@ import tools.jackson.databind.json.JsonMapper;
  * DLQ are configured via {@link MessagingProperties} (LLT-184).
  */
 @Configuration(proxyBeanMethods = false)
+@EnableScheduling
 public class OtlpReceiverConfiguration {
+
+	@Bean
+	@ConditionalOnBooleanProperty(name = "lhamalog.usage.enabled")
+	UsageOutboxRepository usageOutboxRepository(org.springframework.data.mongodb.core.MongoTemplate mongo) {
+		return new MongoUsageOutboxRepository(mongo);
+	}
+
+	@Bean
+	@ConditionalOnBooleanProperty(name = "lhamalog.usage.enabled")
+	UsageFactFactory usageFactFactory() {
+		return new UsageFactFactory(Clock.systemUTC());
+	}
+
+	@Bean
+	@ConditionalOnBooleanProperty(name = "lhamalog.usage.enabled")
+	UsageOutboxObservability usageOutboxObservability(io.micrometer.core.instrument.MeterRegistry meters,
+			UsageProperties properties) {
+		UsageOutboxObservability observability = new UsageOutboxObservability(meters);
+		observability.evidenceExpiryConfigured(properties.deduplicationTtl());
+		return observability;
+	}
+
+	@Bean
+	@ConditionalOnBooleanProperty(name = "lhamalog.usage.enabled")
+	UsageFactRecorder usageFactRecorder(UsageOutboxRepository outbox, UsageOutboxObservability observability) {
+		return new UsageFactRecorder(outbox, Clock.systemUTC(), observability);
+	}
+
+	@Bean
+	@ConditionalOnBooleanProperty(name = "lhamalog.usage.enabled")
+	UsageAcceptanceReconciler usageAcceptanceReconciler(UsageOutboxRepository outbox, StringRedisTemplate redis,
+			UsageProperties properties, UsageOutboxObservability observability) {
+		return new UsageAcceptanceReconciler(outbox, new br.com.lhamalog.collector.usage.outbox.UsageAcceptanceEvidence() {
+			@Override
+			public String read(String key) {
+				return redis.opsForValue().get(key);
+			}
+
+			@Override
+			public String resolvePending(String key) {
+				org.springframework.data.redis.core.script.DefaultRedisScript<String> script =
+						new org.springframework.data.redis.core.script.DefaultRedisScript<>("""
+								local current = redis.call('GET', KEYS[1])
+								if current then return current end
+								redis.call('SET', KEYS[1], 'ABANDONED', 'EX', ARGV[1])
+								return 'ABANDONED'
+								""", String.class);
+				return redis.execute(script, java.util.List.of(key),
+						Long.toString(properties.deduplicationTtl().toSeconds()));
+			}
+		}, Clock.systemUTC(), properties, observability);
+	}
+
+	@Bean
+	@ConditionalOnBooleanProperty(name = "lhamalog.usage.enabled")
+	CoreAuthenticationProvider coreAuthenticationProvider() {
+		return CoreAuthenticationProvider.fromEnvironment();
+	}
+
+	@Bean
+	@ConditionalOnBooleanProperty(name = "lhamalog.usage.enabled")
+	CoreUsageFactsClient coreUsageFactsClient(UsageProperties properties, CoreAuthenticationProvider authentication) {
+		return new CoreUsageFactsClient(HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build(),
+				URI.create(properties.core().url()), authentication);
+	}
+
+	@Bean
+	@ConditionalOnBooleanProperty(name = "lhamalog.usage.enabled")
+	UsageOutboxWorker usageOutboxWorker(UsageOutboxRepository outbox, CoreUsageFactsClient core,
+			UsageProperties properties, UsageOutboxObservability observability) {
+		return new UsageOutboxWorker(outbox, core, properties, Clock.systemUTC(), observability);
+	}
 
 	@Bean
 	TokenValidator productTokenStore(MongoOperations mongo, OtlpReceiverProperties properties) {
@@ -66,16 +151,26 @@ public class OtlpReceiverConfiguration {
 	}
 
 	@Bean
-	LogsSink logsSink(OpenObserveClient client, OtlpReceiverProperties properties, LogIngestedPublisher publisher) {
-		return PublishingLogsSink.of(
-				new OpenObserveLogsSink(client, properties.openobserve().logsStream(), Clock.systemUTC()), publisher);
+	LogsSink logsSink(OpenObserveClient client, OtlpReceiverProperties properties, LogIngestedPublisher publisher,
+			ObjectProvider<UsageFactFactory> usageFacts, ObjectProvider<UsageFactRecorder> usageRecorder,
+			ObjectProvider<UsageProperties> usageProperties) {
+		UsageProperties usage = usageProperties.getIfAvailable();
+		return new PublishingLogsSink(new OpenObserveLogsSink(client, properties.openobserve().logsStream(), Clock.systemUTC()),
+				publisher::publishBatch, usageFacts.getIfAvailable(), usageRecorder.getIfAvailable(),
+				usage == null ? null : (tenant, product, batch, records, key) -> publisher.publishBatchWithUsageEvidence(
+						tenant, product, batch, records, key, usage.deduplicationTtl(), "logs"));
 	}
 
 	@Bean
 	TracesSink tracesSink(OpenObserveClient client, OtlpReceiverProperties properties,
-			TraceIngestedPublisher publisher) {
-		return PublishingTracesSink.of(
-				new OpenObserveTracesSink(client, properties.openobserve().tracesStream(), Clock.systemUTC()), publisher);
+			TraceIngestedPublisher publisher, ObjectProvider<UsageFactFactory> usageFacts,
+			ObjectProvider<UsageFactRecorder> usageRecorder, ObjectProvider<UsageProperties> usageProperties) {
+		UsageProperties usage = usageProperties.getIfAvailable();
+		return new PublishingTracesSink(
+				new OpenObserveTracesSink(client, properties.openobserve().tracesStream(), Clock.systemUTC()),
+				publisher::publishBatch, usageFacts.getIfAvailable(), usageRecorder.getIfAvailable(),
+				usage == null ? null : (tenant, product, batch, records, key) -> publisher.publishBatchWithUsageEvidence(
+						tenant, product, batch, records, key, usage.deduplicationTtl(), "traces"));
 	}
 
 	@Bean

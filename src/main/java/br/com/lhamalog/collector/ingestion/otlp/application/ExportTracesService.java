@@ -33,7 +33,9 @@ public class ExportTracesService {
 
 	public IngestionDecision export(String bearerToken, OtlpPayload<ExportTraceServiceRequest> payload) {
 		return BatchIngestion.run(tokens, bearerToken, payload,
-				request -> SpanAssessment.assess(request, window, clock.instant()), sink::deliver, "spans",
+				request -> SpanAssessment.assess(request, window, clock.instant()),
+				(tenantId, productId, request, accepted) -> sink.deliver(tenantId, productId, request, accepted),
+				"spans",
 				SpanAssessment.REJECTION_REASON);
 	}
 

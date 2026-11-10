@@ -37,7 +37,9 @@ public class ExportLogsService {
 
 	public IngestionDecision export(String bearerToken, OtlpPayload<ExportLogsServiceRequest> payload) {
 		return BatchIngestion.run(tokens, bearerToken, payload,
-				request -> LogRecordAssessment.assess(request, window, clock.instant()), sink::deliver, "log records",
+				request -> LogRecordAssessment.assess(request, window, clock.instant()),
+				(tenantId, productId, request, accepted) -> sink.deliver(tenantId, productId, request, accepted),
+				"log records",
 				LogRecordAssessment.REJECTION_REASON);
 	}
 

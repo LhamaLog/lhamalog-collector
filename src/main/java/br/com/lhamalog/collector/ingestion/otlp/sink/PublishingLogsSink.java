@@ -3,6 +3,11 @@ package br.com.lhamalog.collector.ingestion.otlp.sink;
 
 import br.com.lhamalog.collector.ingestion.otlp.domain.Scoped;
 import br.com.lhamalog.collector.messaging.MessagePublishException;
+import br.com.lhamalog.collector.usage.domain.UsageFact;
+import br.com.lhamalog.collector.usage.domain.UsageFactFactory;
+import br.com.lhamalog.collector.usage.outbox.UsageFactRecorder;
+import br.com.lhamalog.collector.usage.outbox.UsageOutboxItem;
+import io.opentelemetry.proto.collector.logs.v1.ExportLogsServiceRequest;
 import io.opentelemetry.proto.logs.v1.LogRecord;
 import java.util.List;
 
@@ -29,13 +34,41 @@ public class PublishingLogsSink implements LogsSink {
 
 	}
 
+	/** Usage-aware publication; its result is the Redis evidence, never stream inspection. */
+	@FunctionalInterface
+	public interface UsagePublisher {
+
+		String publish(String tenantId, String productId, StoredBatch batch, List<Scoped<LogRecord>> records,
+				String evidenceKey);
+
+	}
+
 	private final BatchStore<LogRecord> store;
 
 	private final Publisher publisher;
 
+	private final UsageFactFactory usageFacts;
+
+	private final UsageFactRecorder usageRecorder;
+
+	private final UsagePublisher usagePublisher;
+
 	public PublishingLogsSink(BatchStore<LogRecord> store, Publisher publisher) {
+		this(store, publisher, null, null, null);
+	}
+
+	public PublishingLogsSink(BatchStore<LogRecord> store, Publisher publisher, UsageFactFactory usageFacts,
+			UsageFactRecorder usageRecorder) {
+		this(store, publisher, usageFacts, usageRecorder, null);
+	}
+
+	public PublishingLogsSink(BatchStore<LogRecord> store, Publisher publisher, UsageFactFactory usageFacts,
+			UsageFactRecorder usageRecorder, UsagePublisher usagePublisher) {
 		this.store = store;
 		this.publisher = publisher;
+		this.usageFacts = usageFacts;
+		this.usageRecorder = usageRecorder;
+		this.usagePublisher = usagePublisher;
 	}
 
 	public static PublishingLogsSink of(BatchStore<LogRecord> store, LogIngestedPublisher publisher) {
@@ -44,14 +77,37 @@ public class PublishingLogsSink implements LogsSink {
 
 	@Override
 	public void deliver(String tenantId, String productId, List<Scoped<LogRecord>> acceptedRecords) {
+		deliver(tenantId, productId, null, acceptedRecords);
+	}
+
+	@Override
+	public void deliver(String tenantId, String productId, ExportLogsServiceRequest request,
+			List<Scoped<LogRecord>> acceptedRecords) {
 		StoredBatch batch = store.store(tenantId, productId, acceptedRecords);
 		if (acceptedRecords.isEmpty()) {
 			return;
 		}
+		UsageOutboxItem candidate = null;
 		try {
-			publisher.publish(tenantId, productId, batch, acceptedRecords);
+			if (request != null && usageFacts != null && usageRecorder != null) {
+				UsageFact fact = usageFacts.logs(tenantId, productId, request, acceptedRecords, batch);
+				candidate = usageRecorder.recordPending(fact);
+			}
+			if (candidate != null && usagePublisher != null) {
+				String evidence = usagePublisher.publish(tenantId, productId, batch, acceptedRecords,
+						candidate.acceptedEvidenceKey());
+				if (!evidence.startsWith("DONE:")) {
+					throw new SinkUnavailableException("Redis did not confirm logs usage evidence", null);
+				}
+			}
+			else {
+				publisher.publish(tenantId, productId, batch, acceptedRecords);
+			}
+			if (candidate != null) {
+				usageRecorder.accept(candidate);
+			}
 		}
-		catch (MessagePublishException ex) {
+		catch (MessagePublishException | IllegalStateException ex) {
 			throw new SinkUnavailableException("Message queue did not confirm the logs reference", ex);
 		}
 	}

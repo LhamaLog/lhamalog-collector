@@ -12,13 +12,22 @@ import br.com.lhamalog.collector.ingestion.otlp.sink.SinkRejectedException;
 import br.com.lhamalog.collector.ingestion.otlp.sink.SinkUnavailableException;
 import br.com.lhamalog.collector.ingestion.otlp.sink.StoredBatch;
 import br.com.lhamalog.collector.messaging.MessagePublishException;
+import br.com.lhamalog.collector.usage.domain.UsageFact;
+import br.com.lhamalog.collector.usage.domain.UsageFactFactory;
+import br.com.lhamalog.collector.usage.outbox.UsageFactRecorder;
+import br.com.lhamalog.collector.usage.outbox.UsageOutboxItem;
+import br.com.lhamalog.collector.usage.outbox.UsageOutboxRepository;
+import br.com.lhamalog.collector.usage.outbox.UsageOutboxState;
 import com.google.protobuf.ByteString;
 import io.opentelemetry.proto.collector.trace.v1.ExportTraceServiceRequest;
 import io.opentelemetry.proto.trace.v1.ResourceSpans;
 import io.opentelemetry.proto.trace.v1.ScopeSpans;
 import io.opentelemetry.proto.trace.v1.Span;
 import java.util.ArrayList;
+import java.time.Clock;
+import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
 /** LLT-182/184: traces mirror logs; ultimate MessagePublishException is DestinationUnavailable. */
@@ -108,6 +117,49 @@ class PublishingTracesSinkTest {
 		IngestionDecision decision = export(VALID_TOKEN, new PublishingTracesSink(storing, recording), batch(VALID));
 		assertThat(decision).isInstanceOf(IngestionDecision.Accepted.class);
 		assertThat(calls).containsExactly("store", "publish:tenant-1/product-a/batch-1");
+	}
+
+	@Test
+	void usageProtocolRecordsPendingThenAcceptsDoneEvidenceForTraces() {
+		Outbox outbox = new Outbox();
+		List<String> protocol = new ArrayList<>();
+		PublishingTracesSink sink = new PublishingTracesSink(storing, recording, new UsageFactFactory(Clock.systemUTC()),
+				new UsageFactRecorder(outbox, Clock.systemUTC()), (tenant, product, stored, records, key) -> {
+					protocol.add("XADD:" + key);
+					return "DONE:traces:1-0";
+				});
+
+		assertThat(export(VALID_TOKEN, sink, batch(VALID))).isInstanceOf(IngestionDecision.Accepted.class);
+		assertThat(protocol).hasSize(1);
+		assertThat(outbox.item.state()).isEqualTo(UsageOutboxState.ACCEPTED);
+	}
+
+	@Test
+	void abandonedEvidenceBlocksTracePublicationAndKeepsFactPending() {
+		Outbox outbox = new Outbox();
+		PublishingTracesSink sink = new PublishingTracesSink(storing, recording, new UsageFactFactory(Clock.systemUTC()),
+				new UsageFactRecorder(outbox, Clock.systemUTC()), (tenant, product, stored, records, key) -> "ABANDONED");
+
+		assertThat(export(VALID_TOKEN, sink, batch(VALID))).isInstanceOf(IngestionDecision.DestinationUnavailable.class);
+		assertThat(outbox.item.state()).isEqualTo(UsageOutboxState.PENDING);
+	}
+
+	private static final class Outbox implements UsageOutboxRepository {
+		private UsageOutboxItem item;
+
+		@Override public UsageOutboxItem insertPending(UsageFact fact, Instant now) {
+			return item = item == null ? UsageOutboxItem.pending(fact, now) : item;
+		}
+		@Override public Optional<UsageOutboxItem> findById(String id) { return Optional.ofNullable(item); }
+		@Override public List<UsageOutboxItem> findPendingBefore(Instant deadline) { return List.of(); }
+		@Override public List<UsageOutboxItem> findAcceptedReady(Instant instant) { return List.of(); }
+		@Override public boolean compareAndSet(String id, UsageOutboxState expected, UsageOutboxItem replacement) {
+			if (item != null && item.id().equals(id) && item.state() == expected) {
+				item = replacement;
+				return true;
+			}
+			return false;
+		}
 	}
 
 }

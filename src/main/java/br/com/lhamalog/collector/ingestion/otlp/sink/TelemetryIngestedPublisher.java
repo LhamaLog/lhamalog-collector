@@ -12,6 +12,7 @@ import com.google.protobuf.MessageLite;
 import io.opentelemetry.proto.common.v1.AnyValue;
 import io.opentelemetry.proto.common.v1.KeyValue;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.EnumMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -52,6 +53,30 @@ public abstract class TelemetryIngestedPublisher<T extends MessageLite>
 	public List<MessageEnvelope> publishBatch(String tenantId, String productId, StoredBatch batch,
 			List<Scoped<T>> records) {
 		return publish(List.of(message(tenantId, productId, batch, records, UUID.randomUUID().toString())));
+	}
+
+	/**
+	 * Publishes the batch reference with a usage evidence key in one Lua
+	 * operation. The evidence is shared by the main stream and its DLQ; a prior
+	 * DONE value never produces another XADD.
+	 */
+	public String publishBatchWithUsageEvidence(String tenantId, String productId, StoredBatch batch,
+			List<Scoped<T>> records, String evidenceKey, Duration evidenceTtl, String route) {
+		OutboundMessage<TelemetryIngestedBody> message = message(tenantId, productId, batch, records,
+				UUID.randomUUID().toString());
+		try {
+			return publishWithUsageEvidence(message, evidenceKey, route, evidenceTtl.toSeconds());
+		}
+		catch (RuntimeException mainFailure) {
+			try {
+				return publishWithUsageEvidence(message, evidenceKey, route + "-dlq", evidenceTtl.toSeconds(),
+						dlqStream, dlqMaxLen);
+			}
+			catch (RuntimeException dlqFailure) {
+				dlqFailure.addSuppressed(mainFailure);
+				throw dlqFailure;
+			}
+		}
 	}
 
 	OutboundMessage<TelemetryIngestedBody> message(String tenantId, String productId, StoredBatch batch,

@@ -27,9 +27,9 @@ final class BatchIngestion {
 	private static final Logger log = LoggerFactory.getLogger(BatchIngestion.class);
 
 	@FunctionalInterface
-	interface Delivery<T> {
+	interface Delivery<R, T> {
 
-		void deliver(String tenantId, String productId, List<T> records);
+		void deliver(String tenantId, String productId, R request, List<T> records);
 
 	}
 
@@ -39,7 +39,7 @@ final class BatchIngestion {
 	}
 
 	static <R, T> IngestionDecision run(TokenValidator tokens, String bearerToken, OtlpPayload<R> payload,
-			Function<R, BatchAssessment<T>> assessment, Delivery<T> sink, String recordName, String rejectionReason) {
+			Function<R, BatchAssessment<T>> assessment, Delivery<R, T> sink, String recordName, String rejectionReason) {
 		TokenValidationResult auth = tokens.validate(bearerToken);
 		TokenValidationResult.Valid valid;
 		switch (auth) {
@@ -67,7 +67,7 @@ final class BatchIngestion {
 					"all " + batch.rejectedCount() + " " + recordName + " are invalid: " + rejectionReason);
 		}
 		try {
-			sink.deliver(valid.tenantId(), valid.productId(), batch.valid());
+			sink.deliver(valid.tenantId(), valid.productId(), request, batch.valid());
 		}
 		catch (SinkUnavailableException ex) {
 			log.warn("Destination did not confirm {} {} of product {}: {}", batch.valid().size(), recordName,
