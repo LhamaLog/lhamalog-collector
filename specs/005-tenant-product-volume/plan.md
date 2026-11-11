@@ -135,8 +135,21 @@ Sem violações da constituição a justificar.
 
 Registrar e tratar numa entrega seguinte, sem reabrir o escopo desta:
 
-- Ensaio E2E T046 (Collector + Core juntos) ainda não executado.
+> **Nota histórica — 2026-11-10 (America/Sao_Paulo):** a restrição deste plano de não
+> implementar cota descreve a entrega histórica da medição. Michel decidiu nesta data que a
+> recusa sem saldo/ciclo pago será planejada na mesma LLT-186 em
+> `specs/006-ingest-quota-reservation`; o desenho ainda não foi implementado.
+> **Atualização histórica — 11/11/2026:** spec006 inclui refund idempotente por outbox após
+> falha pós-débito; a identidade e os bytes canônicos de medição deste plano permanecem a
+> referência, sem duplicação.
+
+- Ensaio E2E T046 (Collector + Core juntos): executar e registrar evidências nesta entrega.
 - Garantia de durabilidade condicional ao Redis AOF `everysec` (RPO de ~1 s após HTTP 200). `appendfsync always` permanece decisão operacional não tomada. Lua sem rollback pode deixar `AMBIGUOUS`. Redis Cluster não é suportado.
 - Fonte externa de `firstPaymentDate` indefinida.
-- Rotação operacional de `LHAMALOG_COLLECTOR_CORE_TOKEN` / `LHAMALOG_CORE_USAGE_TOKEN`.
-- Os 4 `CompanyProductIntegrationTests` do Core seguem pulados sem `TEST_MONGODB_URI`.
+- Rotação operacional (política) de `LHAMALOG_COLLECTOR_CORE_TOKEN` / `LHAMALOG_CORE_USAGE_TOKEN`. O runbook técnico de rotação já está documentado; a política em si não foi decidida.
+- Os 4 `CompanyProductIntegrationTests` do Core seguem dependentes de `TEST_MONGODB_URI` no verify.
+- Confirmação do Michel: escolha técnica reversível de não haver ciclo ativo antes de `firstPaymentDate` (sem devolver ciclo futuro). Não altera a pendência da fonte da data.
+
+A revisão do PR #4 do Core (TTL vs agregação, resumo por domínio, `Instant`, índices explícitos, duplicate key 11000, paginação, mapper e InMemory em teste) foi aplicada no worktree local e registrada como T052–T061.
+
+A revisão do PR #5 do Collector (idempotência sem `acceptedAt`, reabertura de `ABANDONED`, CAS do lease, TTL de 7 dias, `SUSPENDED`, `JsonMapper`, Lua/`CLAIMED`, 11000, no-ops e documentação da medição) foi aplicada no worktree local e registrada como T062–T070.

@@ -78,19 +78,55 @@ civil.
 
 ### Janela de fatos
 
-`GET /internal/usage-facts?tenantId&productId&from&to`
+`GET /internal/usage-facts?tenantId&productId&from&to&limit&cursor`
 
 Requer os mesmos cabeçalhos de autenticação. `tenantId`, `productId`, `from` e `to` são obrigatórios; os
-instantes são ISO-8601 UTC e a janela é `[from,to)`. Retorna os fatos persistidos para a combinação e
-intervalo informados, sem payload OTLP, token ou metadados internos.
+instantes são ISO-8601 UTC e a janela é `[from,to)`. A validação `from < to` ocorre no serviço, não no
+controlador. A resposta é paginada:
+
+```json
+{
+  "items": [],
+  "nextCursor": null
+}
+```
+
+`limit` é opcional (padrão 50, máximo 100). `cursor` é opaco e retoma a página seguinte; ausência de
+`nextCursor` indica a última página. Os fatos são ordenados por `acceptedAt` e identificador persistido.
+O payload não inclui OTLP, token ou metadados internos. O Collector hoje só envia `POST` e não consome
+esta consulta.
+
+### Persistência e idempotência
+
+A idempotência de sete dias fica na coleção `UsageFactIdempotency`, com TTL em `receivedAt`. Os fatos
+usados por `current-cycle` e pela consulta da janela ficam em `UsageFact`, sem TTL, com `acceptedAt`
+persistido como `Instant`. Depois que o documento de idempotência expira, o mesmo `usageFactId` pode ser
+aceito de novo e gera um novo registro de agregação. Índices (`usage_fact_idempotency_ttl`,
+`usage_fact_tenant_product_acceptedAt` e `plan_subscription_tenant_product`) são criados no startup
+via `IndexOperations`.
 
 ### Agregado do ciclo vigente
 
 `GET /internal/usage-facts/current-cycle?tenantId&productId`
 
-Requer os mesmos cabeçalhos. Retorna a agregação de contagem e bytes do ciclo vigente calculado conforme
-[RF-006 e RF-014](../spec.md#requisitos-funcionais), incluindo os limites do ciclo e a apresentação derivada em GB decimal. O ciclo usa
-`firstPaymentDate` obrigatório e UTC como default técnico para a data civil.
+Requer os mesmos cabeçalhos. Retorna a agregação do ciclo vigente calculado conforme
+[RF-006 e RF-014](../spec.md#requisitos-funcionais), com limites do ciclo e GB decimal, **separada por
+domínio** (`logs` e `traces`):
+
+```json
+{
+  "active": true,
+  "from": "2026-11-01T00:00:00Z",
+  "to": "2026-12-01T00:00:00Z",
+  "logs": { "acceptedRecordCount": 10, "acceptedBytes": 1543, "acceptedGigabytes": 0.000001543 },
+  "traces": { "acceptedRecordCount": 2, "acceptedBytes": 400, "acceptedGigabytes": 0.0000004 }
+}
+```
+
+Escolha técnica reversível (para o Michel confirmar; não define a fonte de `firstPaymentDate`): se a
+data civil UTC atual for anterior a `firstPaymentDate`, não há ciclo ativo e a resposta é
+`{ "active": false, "from": null, "to": null, "logs": {zeros}, "traces": {zeros} }` — sem devolver um
+ciclo futuro. O Collector não consome este endpoint hoje.
 
 ## Fora do contrato
 

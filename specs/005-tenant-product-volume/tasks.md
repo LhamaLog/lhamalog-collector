@@ -143,7 +143,7 @@ description: "Tarefas de implementação para LLT-186"
 - [X] T043 [P] **Collector** Atualizar o roteiro de ambiente local, stub autenticado por `X-LhamaLog-Service-Token` com valor de teste injetado e validação dos cenários de retry em `specs/005-tenant-product-volume/quickstart.md`
 - [X] T044 **Collector** Executar `.\mvnw.cmd clean verify` e registrar o resultado da suíte no checklist de validação em `specs/005-tenant-product-volume/quickstart.md`
 - [X] T045 **Core** Executar a suíte de testes do `lhamalog-core` após T032–T041 e registrar o resultado no guia de integração em `../lhamalog-core/docs/usage-facts-integration.md`
-- [ ] T046 **Collector e Core** Executar o ensaio E2E do `quickstart.md` com logs, traces, lote parcial, reenvio, Core 503/timeout e reinício, documentando o resultado em `specs/005-tenant-product-volume/quickstart.md`
+- [X] T046 **Collector e Core** Executar o ensaio E2E do `quickstart.md` com logs, traces, lote parcial, reenvio, Core 503/timeout e reinício, documentando o resultado em `specs/005-tenant-product-volume/quickstart.md`
 
 ---
 
@@ -210,11 +210,41 @@ Task: "Core: idempotência atômica em ../lhamalog-core/src/test/java/br/com/lha
 
 ## Pendências para a próxima implementação
 
-A T046 permanece pendente nesta entrega. As tarefas abaixo ficam para a próxima implementação:
+A T046 permanece o ensaio E2E desta entrega. As correções da revisão do PR #4 do Core
+foram registradas abaixo e aplicadas no worktree local, sem commit.
 
-- [ ] T046 **Collector e Core** Executar o ensaio E2E do `quickstart.md` com logs, traces, lote parcial, reenvio, Core 503/timeout e reinício, documentando o resultado em `specs/005-tenant-product-volume/quickstart.md`
+- [X] T046 **Collector e Core** Executar o ensaio E2E do `quickstart.md` com logs, traces, lote parcial, reenvio, Core 503/timeout e reinício, documentando o resultado em `specs/005-tenant-product-volume/quickstart.md` e `specs/005-tenant-product-volume/e2e-t046-evidence.md`
 - [ ] T047 **Infra** Avaliar e, se aprovado operacionalmente, aplicar `appendfsync always` para reduzir o RPO de ~1 s do Redis AOF `everysec` após HTTP 200; Redis Cluster permanece fora de escopo
 - [ ] T048 **Collector** Operacionalizar o estado `AMBIGUOUS` decorrente do Lua sem rollback (alerta, reconciliação e intervenção), sem fingir rollback transacional
 - [ ] T049 **Core** Definir e integrar a fonte externa que preenche `firstPaymentDate` na entidade de plano/assinatura
-- [ ] T050 **Operação** Definir e executar a rotação dos tokens de serviço `LHAMALOG_COLLECTOR_CORE_TOKEN` e `LHAMALOG_CORE_USAGE_TOKEN`
+- [ ] T050 **Operação** Definir e executar a política de rotação dos tokens de serviço `LHAMALOG_COLLECTOR_CORE_TOKEN` e `LHAMALOG_CORE_USAGE_TOKEN`
 - [ ] T051 **Core** Executar os 4 testes `CompanyProductIntegrationTests` atualmente pulados por falta de `TEST_MONGODB_URI`
+
+### Revisão do PR #4 do Core (worktree local, 2026-11-10)
+
+- [X] T052 **Core** Separar idempotência com TTL de 7 dias (`UsageFactIdempotency`) do armazenamento de agregação sem TTL (`UsageFact`) em `../lhamalog-core/src/main/java/br/com/lhamalog/core/usage/infrastructure/MongoUsageFactRepository.java`
+- [X] T053 **Core** Devolver `current-cycle` separado por domínio (`logs` e `traces`) e atualizar contrato/docs em `../lhamalog-core/src/main/java/br/com/lhamalog/core/usage/application/UsageFactService.java` e `specs/005-tenant-product-volume/contracts/usage-facts-api.md`
+- [X] T054 **Core** Persistir `acceptedAt` como `Instant` e cobrir consulta por janela em Mongo real (Testcontainers) em `../lhamalog-core/src/test/java/br/com/lhamalog/core/usage/infrastructure/MongoUsageFactRepositoryIT.java`
+- [X] T055 **Core** Criar explicitamente no startup os índices TTL e `plan_subscription_tenant_product` via `IndexOperations` em `../lhamalog-core/src/main/java/br/com/lhamalog/core/usage/infrastructure/UsageMongoIndexInitializer.java`
+- [X] T056 **Core** Tratar só duplicate key `11000`, propagar o restante, e reinserir se o documento de idempotência já tiver expirado em `../lhamalog-core/src/main/java/br/com/lhamalog/core/usage/infrastructure/MongoUsageFactRepository.java`
+- [X] T057 **Core** Sem ciclo ativo antes de `firstPaymentDate` (escolha técnica reversível para o Michel confirmar) em `../lhamalog-core/src/main/java/br/com/lhamalog/core/usage/application/UsageCycle.java`
+- [X] T058 **Core** Validar `from < to` somente no serviço em `../lhamalog-core/src/main/java/br/com/lhamalog/core/usage/application/UsageFactService.java`
+- [X] T059 **Core** Mover as implementações `InMemory` de repositório para `src/test` em `../lhamalog-core/src/test/java/br/com/lhamalog/core/usage/infrastructure/InMemoryUsageFactRepository.java` e `../lhamalog-core/src/test/java/br/com/lhamalog/core/usage/application/InMemoryPlanSubscriptionRepository.java`
+- [X] T060 **Core** Separar DTO HTTP do documento Mongo com mapper em `../lhamalog-core/src/main/java/br/com/lhamalog/core/usage/infrastructure/UsageFactDocumentMapper.java`
+- [X] T061 **Core** Paginar `GET /internal/usage-facts` com `limit`/`cursor` (máximo 100) e atualizar o contrato; o Collector não consome essa consulta hoje
+
+### Revisão do PR #5 do Collector (worktree local, 2026-11-10)
+
+- [X] T062 **Collector** Comparar reenvio pelo conteúdo imutável do lote, sem `acceptedAt`, em `src/main/java/br/com/lhamalog/collector/usage/outbox/MongoUsageOutboxRepository.java`
+- [X] T063 **Collector** Reabrir lote `ABANDONED` para medi-lo uma vez em `src/main/java/br/com/lhamalog/collector/usage/outbox/MongoUsageOutboxRepository.java`
+- [X] T064 **Collector** Incluir `leaseOwner`/`leaseUntil` no CAS e em `findAcceptedReady` em `src/main/java/br/com/lhamalog/collector/usage/outbox/MongoUsageOutboxRepository.java`
+- [X] T065 **Collector** Expirar `SYNCED` e `ABANDONED` terminais após 7 dias (`expireAt` + índice) em `src/main/java/br/com/lhamalog/collector/usage/outbox/MongoUsageOutboxRepository.java`
+- [X] T066 **Collector** Estado `SUSPENDED` e métrica `lhamalog.usage.outbox.suspended` em `src/main/java/br/com/lhamalog/collector/usage/core/UsageOutboxWorker.java`
+- [X] T067 **Collector** Serializar o fato com `JsonMapper` em `src/main/java/br/com/lhamalog/collector/usage/core/CoreUsageFactsClient.java`
+- [X] T068 **Collector** Simplificar ramos redundantes do Lua e tratar `CLAIMED` no sink em `src/main/java/br/com/lhamalog/collector/messaging/AbstractStreamPublisher.java` e `src/main/java/br/com/lhamalog/collector/ingestion/otlp/sink/PublishingLogsSink.java`
+- [X] T069 **Collector** Tratar só duplicate key `11000` em `insertPending` e usar no-ops no lugar de nulos opcionais
+- [X] T070 **Collector** Documentar `lhamalog.usage.*`, token obrigatório no boot e a medição em `docs/usage-measurement.md` e `README.md`
+- [X] T071 **Collector** Forcar `lhamalog.usage.enabled=true` no ensaio T046 via `spring-boot.run.arguments`/`jvmArguments` (alem do env), registrar `usage.enabled` no startup e estados da outbox nas evidencias
+- [X] T072 **Core** Persistir/ler `LocalDate` (`firstPaymentDate`) em UTC para o fixture `2026-11-01T00:00:00Z` nao virar o dia civil anterior em `America/Sao_Paulo` em `../lhamalog-core/src/main/java/br/com/lhamalog/core/usage/infrastructure/UsageMongoConverters.java`
+- [X] T073 **Collector e Core** Reexecutar T046 e confirmar no Core contagens/bytes separados, dedup do reenvio, lote novo e retry apos Core fora (SYNCED)
+

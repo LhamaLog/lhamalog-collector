@@ -19,6 +19,9 @@ Para o ensaio local, injete o mesmo valor de teste nos dois processos por mecani
 O stub deve rejeitar a ausência do cabeçalho ou qualquer valor distinto e registrar apenas o
 `usageFactId`, o status e a contagem — nunca o cabeçalho, payload OTLP ou credenciais.
 
+Para trocar esses tokens em ambiente operacional, siga o
+[runbook de rotação](token-rotation-runbook.md).
+
 ## Testes automatizados
 
 ```powershell
@@ -57,6 +60,7 @@ O conjunto precisa provar:
 11. `GET /internal/usage-facts` respeita a janela `[from,to)` e
     `GET /internal/usage-facts/current-cycle` retorna o agregado do ciclo vigente definido em
     [RF-006 e RF-014](spec.md#requisitos-funcionais).
+    A consulta da janela responde `{ items, nextCursor }` com `limit`/`cursor` (padrão 50, máximo 100). O ciclo vigente responde `logs` e `traces` separados e `active: false` se a data civil UTC for anterior a `firstPaymentDate` (escolha técnica reversível).
 
 ## Ensaio local
 
@@ -66,6 +70,16 @@ O conjunto precisa provar:
 docker compose -f infra/local/compose.yaml up -d
 .\mvnw.cmd spring-boot:run "-Dspring-boot.run.profiles=local"
 ```
+
+Para medir volume no ensaio E2E (T046), o Collector precisa subir com `lhamalog.usage.enabled=true` de um
+jeito que o JVM do `spring-boot:run` veja o valor (nao so a sessao do PowerShell). Alem de
+`LHAMALOG_USAGE_ENABLED=true` e `LHAMALOG_COLLECTOR_CORE_TOKEN` no ambiente do processo (nunca em arquivo),
+passe tambem `--lhamalog.usage.enabled=true` e a URL do Core em `-Dspring-boot.run.arguments`, e confirme no
+log de startup `usage.enabled=true` e `Usage outbox worker scheduled`. Sem isso o OTLP continua 200 e o Core
+fica com `items: []`.
+
+O seed de `PlanSubscription.firstPaymentDate` deve ser meia-noite UTC (`2026-11-01T00:00:00Z`). O Core le
+`LocalDate` em UTC para o ciclo civil nao recuar um dia em `America/Sao_Paulo`.
 
 2. Cadastre apenas os dados de token/produto de desenvolvimento necessários e envie:
    - um lote de logs válido do produto A/tenant A;

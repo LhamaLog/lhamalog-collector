@@ -2,8 +2,10 @@
 
 **Feature Branch**: `feature/LLT-186-tenant-product-volume`  
 **Criado em**: 2026-11-08  
-**Status**: Decisões de negócio registradas; não liberada para implementação enquanto persistirem bloqueios técnicos documentados  
+**Status**: Implementação em andamento no worktree local; revisões dos PRs aplicadas, ainda sem release
 **Responsável**: michelbocchijr@gmail.com  
+Documentação da medição: [docs/usage-measurement.md](../../docs/usage-measurement.md).
+
 **Entrada**: LLT-186 — medir o volume ingerido por tenant e produto no Collector para que o Core agregue o uso no ciclo do plano.
 
 ## Cenários de Usuário e Testes *(obrigatório)*
@@ -150,6 +152,14 @@ As decisões acima foram atribuídas a Michel e retransmitidas por BimBot Escola
 ## Pendências para a próxima implementação
 
 Itens deixados de propósito para uma implementação seguinte, sem bloquear o merge desta entrega:
+
+> **Nota histórica — 2026-11-10 (America/Sao_Paulo):** RF-011 descreve corretamente o
+> escopo histórico da medição: a entrega da spec005 não cria bloqueio nem reserva de cota.
+> Michel decidiu em 10/11/2026 incluir a recusa sem saldo/ciclo pago na mesma LLT-186, com
+> desenho separado em `specs/006-ingest-quota-reservation`; ainda não está implementado.
+> **Atualização histórica — 11/11/2026:** a spec006 também tornou obrigatório o refund
+> idempotente via outbox para falha de escrita/publicação após o débito; a medição desta spec
+> continua sendo a fonte dos bytes canônicos, sem segunda contagem.
 
 1. **Ensaio ponta a ponta (T046)**: o ensaio E2E do `quickstart.md` com Collector e Core juntos ainda não foi executado (logs, traces, lote parcial, reenvio, Core 503/timeout e reinício).
 2. **Durabilidade condicional do Redis**: com AOF `everysec`, o RPO após um HTTP 200 pode ser de até cerca de 1 s; a decisão operacional de usar `appendfsync always` não foi tomada. O script Lua é atômico, mas não faz rollback: um estado `AMBIGUOUS` depende do reconciliador e de intervenção operacional. Redis Cluster não é suportado pelo desenho atual das chaves e dos streams.
