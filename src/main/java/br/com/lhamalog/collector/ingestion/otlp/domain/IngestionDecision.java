@@ -84,4 +84,12 @@ public sealed interface IngestionDecision {
 	record DestinationUnavailable(long retryAfterSeconds) implements IngestionDecision {
 	}
 
+	/** Core refused the complete eligible batch because its shared cycle balance is exhausted. */
+	record QuotaExceeded() implements IngestionDecision {
+	}
+
+	/** Core cannot identify an active paid allowance, or cannot be reached safely. */
+	record QuotaUnavailable() implements IngestionDecision {
+	}
+
 }

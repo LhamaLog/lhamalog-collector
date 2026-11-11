@@ -7,6 +7,7 @@ import br.com.lhamalog.collector.messaging.MessageEnvelope;
 import br.com.lhamalog.collector.messaging.MessagingProperties;
 import br.com.lhamalog.collector.messaging.MetadataKeys;
 import br.com.lhamalog.collector.messaging.OutboundMessage;
+import br.com.lhamalog.collector.quota.ReservationCorrelation;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.MessageLite;
 import io.opentelemetry.proto.common.v1.AnyValue;
@@ -85,6 +86,10 @@ public abstract class TelemetryIngestedPublisher<T extends MessageLite>
 		metadata.put(MetadataKeys.TENANT_ID, tenantId);
 		metadata.put(MetadataKeys.PRODUCT_ID, productId);
 		metadata.put(MetadataKeys.CORRELATION_ID, correlationId);
+		String reservationId = ReservationCorrelation.current();
+		if (reservationId != null && !reservationId.isBlank()) {
+			metadata.put(MetadataKeys.RESERVATION_ID, reservationId);
+		}
 		Set<String> traces = new LinkedHashSet<>();
 		Set<String> services = new TreeSet<>();
 		Map<Criticality, Integer> counts = new EnumMap<>(Criticality.class);

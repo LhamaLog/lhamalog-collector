@@ -3,6 +3,7 @@ package br.com.lhamalog.collector.config;
 
 import br.com.lhamalog.collector.ingestion.otlp.application.ExportLogsService;
 import br.com.lhamalog.collector.ingestion.otlp.application.ExportTracesService;
+import br.com.lhamalog.collector.ingestion.otlp.application.BatchSanitizer;
 import br.com.lhamalog.collector.ingestion.otlp.auth.MongoProductTokenStore;
 import br.com.lhamalog.collector.ingestion.otlp.auth.TokenValidator;
 import br.com.lhamalog.collector.ingestion.otlp.grpc.OtlpGrpcServer;
@@ -16,7 +17,17 @@ import br.com.lhamalog.collector.ingestion.otlp.sink.PublishingLogsSink;
 import br.com.lhamalog.collector.ingestion.otlp.sink.PublishingTracesSink;
 import br.com.lhamalog.collector.ingestion.otlp.sink.TraceIngestedPublisher;
 import br.com.lhamalog.collector.ingestion.otlp.sink.TracesSink;
+import br.com.lhamalog.collector.ingestion.otlp.sink.E2eFaultInjectingBatchStore;
 import br.com.lhamalog.collector.messaging.MessagingProperties;
+import br.com.lhamalog.collector.quota.CanonicalQuotaGate;
+import br.com.lhamalog.collector.quota.HttpQuotaReservationClient;
+import br.com.lhamalog.collector.quota.QuotaProperties;
+import br.com.lhamalog.collector.quota.QuotaE2eProperties;
+import br.com.lhamalog.collector.quota.QuotaReservationClient;
+import br.com.lhamalog.collector.quota.RefundOutboxRepository;
+import br.com.lhamalog.collector.quota.MongoRefundOutboxRepository;
+import br.com.lhamalog.collector.quota.RefundOutboxWorker;
+import br.com.lhamalog.collector.quota.QuotaObservability;
 import br.com.lhamalog.collector.usage.core.CoreAuthenticationProvider;
 import br.com.lhamalog.collector.usage.core.CoreUsageFactsClient;
 import br.com.lhamalog.collector.usage.core.UsageOutboxWorker;
@@ -31,6 +42,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.time.Clock;
 import java.time.Duration;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBooleanProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -76,6 +88,12 @@ public class OtlpReceiverConfiguration {
 
 	@Bean
 	@ConditionalOnBooleanProperty(name = "lhamalog.usage.enabled")
+	UsageRedisStartupValidator usageRedisStartupValidator(StringRedisTemplate redis) {
+		return new UsageRedisStartupValidator(redis);
+	}
+
+	@Bean
+	@ConditionalOnBooleanProperty(name = "lhamalog.usage.enabled")
 	UsageFactRecorder usageFactRecorder(UsageOutboxRepository outbox, UsageOutboxObservability observability) {
 		return new UsageFactRecorder(outbox, Clock.systemUTC(), observability);
 	}
@@ -107,15 +125,76 @@ public class OtlpReceiverConfiguration {
 
 	@Bean
 	@ConditionalOnBooleanProperty(name = "lhamalog.usage.enabled")
-	CoreAuthenticationProvider coreAuthenticationProvider() {
-		return CoreAuthenticationProvider.fromEnvironment();
+	CoreAuthenticationProvider coreAuthenticationProvider(
+			@Value("${LHAMALOG_COLLECTOR_CORE_TOKEN:}") String serviceToken) {
+		String resolved = firstNonBlank(serviceToken, System.getenv("LHAMALOG_COLLECTOR_CORE_TOKEN"));
+		if (resolved == null || resolved.isBlank()) {
+			throw new IllegalStateException(
+					"LHAMALOG_COLLECTOR_CORE_TOKEN is required when lhamalog.usage.enabled=true");
+		}
+		return new CoreAuthenticationProvider(resolved);
+	}
+
+	private static String firstNonBlank(String... values) {
+		for (String value : values) {
+			if (value != null && !value.isBlank()) {
+				return value;
+			}
+		}
+		return null;
 	}
 
 	@Bean
 	@ConditionalOnBooleanProperty(name = "lhamalog.usage.enabled")
-	CoreUsageFactsClient coreUsageFactsClient(UsageProperties properties, CoreAuthenticationProvider authentication) {
+	CoreUsageFactsClient coreUsageFactsClient(UsageProperties properties, CoreAuthenticationProvider authentication,
+			tools.jackson.databind.json.JsonMapper json) {
 		return new CoreUsageFactsClient(HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build(),
-				URI.create(properties.core().url()), authentication);
+				URI.create(properties.core().url()), authentication, json);
+	}
+
+	@Bean
+	@ConditionalOnBooleanProperty(name = "lhamalog.quota.enabled")
+	QuotaReservationClient quotaReservationClient(UsageProperties properties, QuotaProperties quota,
+			@Value("${LHAMALOG_COLLECTOR_CORE_TOKEN:}") String serviceToken, JsonMapper json) {
+		String resolved = firstNonBlank(serviceToken, System.getenv("LHAMALOG_COLLECTOR_CORE_TOKEN"));
+		if (resolved == null || resolved.isBlank()) {
+			throw new IllegalStateException("LHAMALOG_COLLECTOR_CORE_TOKEN is required when lhamalog.quota.enabled=true");
+		}
+		return new HttpQuotaReservationClient(HttpClient.newBuilder().connectTimeout(quota.timeout()).build(),
+				URI.create(properties.core().url()), new CoreAuthenticationProvider(resolved), json, quota.timeout());
+	}
+
+	@Bean
+	@ConditionalOnBooleanProperty(name = "lhamalog.quota.enabled")
+	QuotaObservability quotaObservability(io.micrometer.core.instrument.MeterRegistry meters) {
+		return new QuotaObservability(meters);
+	}
+
+	@Bean
+	@ConditionalOnBooleanProperty(name = "lhamalog.quota.enabled")
+	RefundOutboxRepository refundOutboxRepository(org.springframework.data.mongodb.core.MongoTemplate mongo) {
+		return new MongoRefundOutboxRepository(mongo);
+	}
+
+	@Bean
+	@ConditionalOnBooleanProperty(name = "lhamalog.quota.enabled")
+	RefundOutboxWorker refundOutboxWorker(RefundOutboxRepository outbox, QuotaReservationClient client,
+			QuotaProperties properties, QuotaObservability observability) {
+		return new RefundOutboxWorker(outbox, client, properties, Clock.systemUTC(), observability);
+	}
+
+	@Bean(destroyMethod = "shutdown")
+	@ConditionalOnBooleanProperty(name = "lhamalog.quota.enabled")
+	org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler refundOutboxTaskScheduler(
+			RefundOutboxWorker worker, QuotaProperties properties) {
+		var scheduler = new org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler();
+		scheduler.setPoolSize(1);
+		scheduler.setThreadNamePrefix("quota-refund-");
+		scheduler.setErrorHandler(error -> org.slf4j.LoggerFactory.getLogger(RefundOutboxWorker.class)
+				.warn("Quota refund scheduler iteration failed", error));
+		scheduler.initialize();
+		scheduler.scheduleWithFixedDelay(worker::runOnce, properties.refundWorkerInterval());
+		return scheduler;
 	}
 
 	@Bean
@@ -123,6 +202,20 @@ public class OtlpReceiverConfiguration {
 	UsageOutboxWorker usageOutboxWorker(UsageOutboxRepository outbox, CoreUsageFactsClient core,
 			UsageProperties properties, UsageOutboxObservability observability) {
 		return new UsageOutboxWorker(outbox, core, properties, Clock.systemUTC(), observability);
+	}
+
+	@Bean(destroyMethod = "shutdown")
+	@ConditionalOnBooleanProperty(name = "lhamalog.usage.enabled")
+	org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler usageOutboxTaskScheduler(
+			UsageOutboxWorker worker, UsageProperties properties) {
+		var scheduler = new org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler();
+		scheduler.setPoolSize(1);
+		scheduler.setThreadNamePrefix("usage-outbox-");
+		scheduler.setErrorHandler(error -> org.slf4j.LoggerFactory.getLogger(UsageOutboxWorker.class)
+				.warn("Usage outbox scheduler iteration failed", error));
+		scheduler.initialize();
+		scheduler.scheduleWithFixedDelay(worker::runOnce, properties.workerInterval());
+		return scheduler;
 	}
 
 	@Bean
@@ -153,9 +246,10 @@ public class OtlpReceiverConfiguration {
 	@Bean
 	LogsSink logsSink(OpenObserveClient client, OtlpReceiverProperties properties, LogIngestedPublisher publisher,
 			ObjectProvider<UsageFactFactory> usageFacts, ObjectProvider<UsageFactRecorder> usageRecorder,
-			ObjectProvider<UsageProperties> usageProperties) {
+			ObjectProvider<UsageProperties> usageProperties, QuotaE2eProperties e2e) {
 		UsageProperties usage = usageProperties.getIfAvailable();
-		return new PublishingLogsSink(new OpenObserveLogsSink(client, properties.openobserve().logsStream(), Clock.systemUTC()),
+		return new PublishingLogsSink(new E2eFaultInjectingBatchStore<>(
+				new OpenObserveLogsSink(client, properties.openobserve().logsStream(), Clock.systemUTC()), e2e.enabled()),
 				publisher::publishBatch, usageFacts.getIfAvailable(), usageRecorder.getIfAvailable(),
 				usage == null ? null : (tenant, product, batch, records, key) -> publisher.publishBatchWithUsageEvidence(
 						tenant, product, batch, records, key, usage.deduplicationTtl(), "logs"));
@@ -164,23 +258,44 @@ public class OtlpReceiverConfiguration {
 	@Bean
 	TracesSink tracesSink(OpenObserveClient client, OtlpReceiverProperties properties,
 			TraceIngestedPublisher publisher, ObjectProvider<UsageFactFactory> usageFacts,
-			ObjectProvider<UsageFactRecorder> usageRecorder, ObjectProvider<UsageProperties> usageProperties) {
+			ObjectProvider<UsageFactRecorder> usageRecorder, ObjectProvider<UsageProperties> usageProperties,
+			QuotaE2eProperties e2e) {
 		UsageProperties usage = usageProperties.getIfAvailable();
 		return new PublishingTracesSink(
-				new OpenObserveTracesSink(client, properties.openobserve().tracesStream(), Clock.systemUTC()),
+				new E2eFaultInjectingBatchStore<>(
+						new OpenObserveTracesSink(client, properties.openobserve().tracesStream(), Clock.systemUTC()), e2e.enabled()),
 				publisher::publishBatch, usageFacts.getIfAvailable(), usageRecorder.getIfAvailable(),
 				usage == null ? null : (tenant, product, batch, records, key) -> publisher.publishBatchWithUsageEvidence(
 						tenant, product, batch, records, key, usage.deduplicationTtl(), "traces"));
 	}
 
 	@Bean
-	ExportLogsService exportLogsService(TokenValidator tokens, LogsSink sink, OtlpReceiverProperties properties) {
-		return new ExportLogsService(tokens, sink, properties.timestamp().toWindow(), Clock.systemUTC());
+	ExportLogsService exportLogsService(TokenValidator tokens, LogsSink sink, OtlpReceiverProperties properties,
+			ObjectProvider<QuotaReservationClient> quotas, ObjectProvider<RefundOutboxRepository> refunds,
+			ObjectProvider<QuotaObservability> observability, QuotaE2eProperties e2e) {
+		QuotaReservationClient quota = quotas.getIfAvailable();
+		return new ExportLogsService(tokens, sink, properties.timestamp().toWindow(), Clock.systemUTC(),
+				quota == null ? null : new CanonicalQuotaGate<>(quota, refunds.getIfAvailable(),
+						observability.getIfAvailable(() -> QuotaObservability.NOOP)),
+				(request, accepted) -> sanitizeForE2e(request.toString(), accepted, e2e.enabled()));
 	}
 
 	@Bean
-	ExportTracesService exportTracesService(TokenValidator tokens, TracesSink sink, OtlpReceiverProperties properties) {
-		return new ExportTracesService(tokens, sink, properties.timestamp().toWindow(), Clock.systemUTC());
+	ExportTracesService exportTracesService(TokenValidator tokens, TracesSink sink, OtlpReceiverProperties properties,
+			ObjectProvider<QuotaReservationClient> quotas, ObjectProvider<RefundOutboxRepository> refunds,
+			ObjectProvider<QuotaObservability> observability, QuotaE2eProperties e2e) {
+		QuotaReservationClient quota = quotas.getIfAvailable();
+		return new ExportTracesService(tokens, sink, properties.timestamp().toWindow(), Clock.systemUTC(),
+				quota == null ? null : new CanonicalQuotaGate<>(quota, refunds.getIfAvailable(),
+						observability.getIfAvailable(() -> QuotaObservability.NOOP)),
+				(request, accepted) -> sanitizeForE2e(request.toString(), accepted, e2e.enabled()));
+	}
+
+	private static <T> java.util.List<T> sanitizeForE2e(String request, java.util.List<T> accepted, boolean enabled) {
+		if (enabled && request.contains("__e2e_sanitizer_reject__")) {
+			throw new BatchSanitizer.RejectedException("E2E injected sanitizer rejection");
+		}
+		return accepted;
 	}
 
 	@Bean

@@ -24,15 +24,31 @@ public class ExportLogsService {
 
 	private final Clock clock;
 
+	private final QuotaGate<ExportLogsServiceRequest, br.com.lhamalog.collector.ingestion.otlp.domain.Scoped<io.opentelemetry.proto.logs.v1.LogRecord>> quota;
+	private final BatchSanitizer<ExportLogsServiceRequest, br.com.lhamalog.collector.ingestion.otlp.domain.Scoped<io.opentelemetry.proto.logs.v1.LogRecord>> sanitizer;
+
 	public ExportLogsService(TokenValidator tokens, LogsSink sink) {
-		this(tokens, sink, TimestampWindow.DEFAULT, Clock.systemUTC());
+		this(tokens, sink, TimestampWindow.DEFAULT, Clock.systemUTC(), null);
 	}
 
 	public ExportLogsService(TokenValidator tokens, LogsSink sink, TimestampWindow window, Clock clock) {
+		this(tokens, sink, window, clock, null);
+	}
+
+	public ExportLogsService(TokenValidator tokens, LogsSink sink, TimestampWindow window, Clock clock,
+			QuotaGate<ExportLogsServiceRequest, br.com.lhamalog.collector.ingestion.otlp.domain.Scoped<io.opentelemetry.proto.logs.v1.LogRecord>> quota) {
+		this(tokens, sink, window, clock, quota, BatchSanitizer.identity());
+	}
+
+	public ExportLogsService(TokenValidator tokens, LogsSink sink, TimestampWindow window, Clock clock,
+			QuotaGate<ExportLogsServiceRequest, br.com.lhamalog.collector.ingestion.otlp.domain.Scoped<io.opentelemetry.proto.logs.v1.LogRecord>> quota,
+			BatchSanitizer<ExportLogsServiceRequest, br.com.lhamalog.collector.ingestion.otlp.domain.Scoped<io.opentelemetry.proto.logs.v1.LogRecord>> sanitizer) {
 		this.tokens = tokens;
 		this.sink = sink;
 		this.window = window;
 		this.clock = clock;
+		this.quota = quota;
+		this.sanitizer = sanitizer;
 	}
 
 	public IngestionDecision export(String bearerToken, OtlpPayload<ExportLogsServiceRequest> payload) {
@@ -40,7 +56,7 @@ public class ExportLogsService {
 				request -> LogRecordAssessment.assess(request, window, clock.instant()),
 				(tenantId, productId, request, accepted) -> sink.deliver(tenantId, productId, request, accepted),
 				"log records",
-				LogRecordAssessment.REJECTION_REASON);
+				LogRecordAssessment.REJECTION_REASON, quota, sanitizer);
 	}
 
 }

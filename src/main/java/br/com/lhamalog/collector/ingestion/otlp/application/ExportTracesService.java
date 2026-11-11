@@ -20,15 +20,31 @@ public class ExportTracesService {
 
 	private final Clock clock;
 
+	private final QuotaGate<ExportTraceServiceRequest, br.com.lhamalog.collector.ingestion.otlp.domain.Scoped<io.opentelemetry.proto.trace.v1.Span>> quota;
+	private final BatchSanitizer<ExportTraceServiceRequest, br.com.lhamalog.collector.ingestion.otlp.domain.Scoped<io.opentelemetry.proto.trace.v1.Span>> sanitizer;
+
 	public ExportTracesService(TokenValidator tokens, TracesSink sink) {
-		this(tokens, sink, TimestampWindow.DEFAULT, Clock.systemUTC());
+		this(tokens, sink, TimestampWindow.DEFAULT, Clock.systemUTC(), null);
 	}
 
 	public ExportTracesService(TokenValidator tokens, TracesSink sink, TimestampWindow window, Clock clock) {
+		this(tokens, sink, window, clock, null);
+	}
+
+	public ExportTracesService(TokenValidator tokens, TracesSink sink, TimestampWindow window, Clock clock,
+			QuotaGate<ExportTraceServiceRequest, br.com.lhamalog.collector.ingestion.otlp.domain.Scoped<io.opentelemetry.proto.trace.v1.Span>> quota) {
+		this(tokens, sink, window, clock, quota, BatchSanitizer.identity());
+	}
+
+	public ExportTracesService(TokenValidator tokens, TracesSink sink, TimestampWindow window, Clock clock,
+			QuotaGate<ExportTraceServiceRequest, br.com.lhamalog.collector.ingestion.otlp.domain.Scoped<io.opentelemetry.proto.trace.v1.Span>> quota,
+			BatchSanitizer<ExportTraceServiceRequest, br.com.lhamalog.collector.ingestion.otlp.domain.Scoped<io.opentelemetry.proto.trace.v1.Span>> sanitizer) {
 		this.tokens = tokens;
 		this.sink = sink;
 		this.window = window;
 		this.clock = clock;
+		this.quota = quota;
+		this.sanitizer = sanitizer;
 	}
 
 	public IngestionDecision export(String bearerToken, OtlpPayload<ExportTraceServiceRequest> payload) {
@@ -36,7 +52,7 @@ public class ExportTracesService {
 				request -> SpanAssessment.assess(request, window, clock.instant()),
 				(tenantId, productId, request, accepted) -> sink.deliver(tenantId, productId, request, accepted),
 				"spans",
-				SpanAssessment.REJECTION_REASON);
+				SpanAssessment.REJECTION_REASON, quota, sanitizer);
 	}
 
 }
