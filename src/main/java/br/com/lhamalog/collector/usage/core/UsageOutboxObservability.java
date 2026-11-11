@@ -18,6 +18,8 @@ public final class UsageOutboxObservability {
 
 	private static final Logger log = LoggerFactory.getLogger(UsageOutboxObservability.class);
 
+	public static final UsageOutboxObservability NOOP = new UsageOutboxObservability();
+
 	private final MeterRegistry meters;
 
 	private final AtomicLong attempts = new AtomicLong();
@@ -25,6 +27,10 @@ public final class UsageOutboxObservability {
 	private final AtomicLong pendingAgeSeconds = new AtomicLong();
 
 	private final AtomicLong evidenceTtlSeconds = new AtomicLong();
+
+	private UsageOutboxObservability() {
+		this.meters = null;
+	}
 
 	public UsageOutboxObservability(MeterRegistry meters) {
 		this.meters = meters;
@@ -34,15 +40,32 @@ public final class UsageOutboxObservability {
 	}
 
 	public void transition(UsageOutboxState state) {
+		if (meters == null) {
+			return;
+		}
 		Counter.builder("lhamalog.usage.outbox.transitions").tag("state", state.name()).register(meters).increment();
 	}
 
 	public void retry(UsageOutboxItem item) {
+		if (meters == null) {
+			return;
+		}
 		Counter.builder("lhamalog.usage.outbox.retries").register(meters).increment();
 		attempts.set(item.attemptCount());
 	}
 
+	public void suspended(UsageOutboxItem item) {
+		if (meters == null) {
+			return;
+		}
+		Counter.builder("lhamalog.usage.outbox.suspended").register(meters).increment();
+		attempts.set(item.attemptCount());
+	}
+
 	public void pendingAge(UsageOutboxItem item, Instant now, Duration grace) {
+		if (meters == null) {
+			return;
+		}
 		double age = Math.max(0, Duration.between(item.createdAt(), now).toSeconds());
 		pendingAgeSeconds.set((long) age);
 		if (age > grace.toSeconds()) {
@@ -52,11 +75,17 @@ public final class UsageOutboxObservability {
 	}
 
 	public void ambiguous() {
+		if (meters == null) {
+			return;
+		}
 		Counter.builder("lhamalog.usage.outbox.ambiguous").register(meters).increment();
 		log.error("Usage outbox contains ambiguous Redis acceptance evidence");
 	}
 
 	public void evidenceExpiryConfigured(Duration ttl) {
+		if (meters == null) {
+			return;
+		}
 		evidenceTtlSeconds.set(ttl.toSeconds());
 	}
 }

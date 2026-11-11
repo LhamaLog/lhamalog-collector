@@ -68,7 +68,11 @@ public class PublishingTracesSink implements TracesSink {
 		this.publisher = publisher;
 		this.usageFacts = usageFacts;
 		this.usageRecorder = usageRecorder;
-		this.usagePublisher = usagePublisher;
+		this.usagePublisher = usagePublisher != null ? usagePublisher
+				: (tenantId, productId, batch, records, evidenceKey) -> {
+					publisher.publish(tenantId, productId, batch, records);
+					return "DONE:disabled";
+				};
 	}
 
 	public static PublishingTracesSink of(BatchStore<Span> store, TraceIngestedPublisher publisher) {
@@ -93,17 +97,14 @@ public class PublishingTracesSink implements TracesSink {
 				UsageFact fact = usageFacts.traces(tenantId, productId, request, acceptedSpans, batch);
 				candidate = usageRecorder.recordPending(fact);
 			}
-			if (candidate != null && usagePublisher != null) {
-				String evidence = usagePublisher.publish(tenantId, productId, batch, acceptedSpans,
-						candidate.acceptedEvidenceKey());
-				if (!evidence.startsWith("DONE:")) {
-					throw new SinkUnavailableException("Redis did not confirm traces usage evidence", null);
-				}
+			if (candidate != null) {
+				PublishingLogsSink.confirmUsageEvidence(usagePublisher.publish(tenantId, productId, batch,
+						acceptedSpans, candidate.acceptedEvidenceKey()), "traces");
 			}
 			else {
 				publisher.publish(tenantId, productId, batch, acceptedSpans);
 			}
-			if (candidate != null) {
+			if (candidate != null && candidate.state() == br.com.lhamalog.collector.usage.outbox.UsageOutboxState.PENDING) {
 				usageRecorder.accept(candidate);
 			}
 		}

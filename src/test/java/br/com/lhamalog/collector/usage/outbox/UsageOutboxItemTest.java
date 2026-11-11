@@ -22,6 +22,8 @@ class UsageOutboxItemTest {
 		assertThat(pending.markAmbiguous().state()).isEqualTo(UsageOutboxState.AMBIGUOUS);
 		assertThat(pending.accept().sync(NOW).state()).isEqualTo(UsageOutboxState.SYNCED);
 		assertThatThrownBy(() -> pending.sync(NOW)).isInstanceOf(IllegalStateException.class);
+		assertThat(pending.accept().suspend("HTTP_401").state()).isEqualTo(UsageOutboxState.SUSPENDED);
+		assertThat(pending.accept().sync(NOW).expireAt()).isEqualTo(NOW.plus(UsageOutboxItem.RETENTION));
 	}
 
 	@Test

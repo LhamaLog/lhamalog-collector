@@ -43,9 +43,39 @@ class UsageOutboxWorkerTest {
 
 		FakeOutbox rejected = new FakeOutbox(accepted());
 		new UsageOutboxWorker(rejected, fact -> 409, properties(), CLOCK, "worker").runOnce();
-		assertThat(rejected.item.state()).isEqualTo(UsageOutboxState.ACCEPTED);
+		assertThat(rejected.item.state()).isEqualTo(UsageOutboxState.SUSPENDED);
 		assertThat(rejected.item.lastErrorCode()).isEqualTo("HTTP_409");
-		assertThat(rejected.item.nextAttemptAt()).isEqualTo(Instant.ofEpochMilli(Long.MAX_VALUE));
+
+		FakeOutbox unauthorized = new FakeOutbox(accepted());
+		new UsageOutboxWorker(unauthorized, fact -> 401, properties(), CLOCK, "worker").runOnce();
+		assertThat(unauthorized.item.state()).isEqualTo(UsageOutboxState.SUSPENDED);
+		assertThat(unauthorized.item.lastErrorCode()).isEqualTo("HTTP_401");
+
+		FakeOutbox forbidden = new FakeOutbox(accepted());
+		new UsageOutboxWorker(forbidden, fact -> 403, properties(), CLOCK, "worker").runOnce();
+		assertThat(forbidden.item.state()).isEqualTo(UsageOutboxState.SUSPENDED);
+
+		FakeOutbox throttled = new FakeOutbox(accepted());
+		new UsageOutboxWorker(throttled, fact -> 429, properties(), CLOCK, "worker").runOnce();
+		assertThat(throttled.item.state()).isEqualTo(UsageOutboxState.ACCEPTED);
+		assertThat(throttled.item.nextAttemptAt()).isAfter(NOW);
+		assertThat(throttled.item.nextAttemptAt()).isBeforeOrEqualTo(NOW.plusSeconds(30));
+
+		FakeOutbox serverError = new FakeOutbox(accepted());
+		new UsageOutboxWorker(serverError, fact -> 503, properties(), CLOCK, "worker").runOnce();
+		assertThat(serverError.item.state()).isEqualTo(UsageOutboxState.ACCEPTED);
+		assertThat(serverError.item.nextAttemptAt()).isAfter(NOW);
+	}
+
+	@Test
+	void capsBackoffSoNextAttemptStaysInsideBsonDateRange() {
+		UsageOutboxItem base = accepted();
+		UsageOutboxItem manyAttempts = new UsageOutboxItem(base.id(), base.fact(), base.state(), 10_000,
+				base.nextAttemptAt(), null, null, null, base.createdAt(), null, base.acceptedEvidenceKey(), null);
+		Instant next = UsageOutboxWorker.nextRetryAt(manyAttempts, NOW, properties());
+		assertThat(next.toEpochMilli()).isBetween(0L, UsageOutboxWorker.BSON_DATE_MAX.toEpochMilli());
+		assertThat(next).isAfter(NOW);
+		assertThat(next).isBeforeOrEqualTo(NOW.plusSeconds(31));
 	}
 
 	private static UsageOutboxItem accepted() {
@@ -70,10 +100,22 @@ class UsageOutboxWorkerTest {
 		@Override public Optional<UsageOutboxItem> findById(String id) { return Optional.of(item); }
 		@Override public List<UsageOutboxItem> findPendingBefore(Instant instant) { return List.of(); }
 		@Override public List<UsageOutboxItem> findAcceptedReady(Instant instant) {
-			return item.state() == UsageOutboxState.ACCEPTED && !item.nextAttemptAt().isAfter(instant) ? List.of(item) : List.of();
+			boolean leaseFree = item.leaseUntil() == null || !item.leaseUntil().isAfter(instant);
+			return item.state() == UsageOutboxState.ACCEPTED && !item.nextAttemptAt().isAfter(instant) && leaseFree
+					? List.of(item) : List.of();
 		}
 		@Override public boolean compareAndSet(String id, UsageOutboxState expected, UsageOutboxItem replacement) {
 			if (item.id().equals(id) && item.state() == expected) {
+				item = replacement;
+				return true;
+			}
+			return false;
+		}
+
+		@Override public boolean compareAndSet(UsageOutboxItem expected, UsageOutboxItem replacement) {
+			if (item.id().equals(expected.id()) && item.state() == expected.state()
+					&& java.util.Objects.equals(item.leaseOwner(), expected.leaseOwner())
+					&& java.util.Objects.equals(item.leaseUntil(), expected.leaseUntil())) {
 				item = replacement;
 				return true;
 			}

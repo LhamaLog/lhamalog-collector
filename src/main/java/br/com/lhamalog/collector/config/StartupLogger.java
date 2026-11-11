@@ -39,6 +39,7 @@ public class StartupLogger {
         }
         String profiles = String.join(",", active);
         String java = String.valueOf(Runtime.version().feature());
-        log.info("[LhamaLog] {} iniciado | versao={} | porta={} | perfis={} | java={}", name, version, port, profiles, java);
+        boolean usageEnabled = environment.getProperty("lhamalog.usage.enabled", Boolean.class, Boolean.FALSE);
+        log.info("[LhamaLog] {} iniciado | versao={} | porta={} | perfis={} | java={} | usage.enabled={}", name, version, port, profiles, java, usageEnabled);
     }
 }

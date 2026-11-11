@@ -9,6 +9,7 @@ import io.opentelemetry.proto.trace.v1.Span;
 import java.time.Clock;
 import java.util.List;
 
+/** Builds UsageFact instances from accepted OTLP logs or traces using the canonical uncompressed protobuf size, including resource, scope and envelope. */
 public final class UsageFactFactory {
 
 	private final Clock clock;

@@ -16,4 +16,8 @@ public interface UsageOutboxRepository {
 	List<UsageOutboxItem> findAcceptedReady(Instant instant);
 
 	boolean compareAndSet(String usageFactId, UsageOutboxState expected, UsageOutboxItem replacement);
+
+	default boolean compareAndSet(UsageOutboxItem expected, UsageOutboxItem replacement) {
+		return compareAndSet(expected.id(), expected.state(), replacement);
+	}
 }

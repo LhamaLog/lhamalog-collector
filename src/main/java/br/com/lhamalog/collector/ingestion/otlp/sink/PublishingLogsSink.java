@@ -68,7 +68,11 @@ public class PublishingLogsSink implements LogsSink {
 		this.publisher = publisher;
 		this.usageFacts = usageFacts;
 		this.usageRecorder = usageRecorder;
-		this.usagePublisher = usagePublisher;
+		this.usagePublisher = usagePublisher != null ? usagePublisher
+				: (tenantId, productId, batch, records, evidenceKey) -> {
+					publisher.publish(tenantId, productId, batch, records);
+					return "DONE:disabled";
+				};
 	}
 
 	public static PublishingLogsSink of(BatchStore<LogRecord> store, LogIngestedPublisher publisher) {
@@ -93,17 +97,14 @@ public class PublishingLogsSink implements LogsSink {
 				UsageFact fact = usageFacts.logs(tenantId, productId, request, acceptedRecords, batch);
 				candidate = usageRecorder.recordPending(fact);
 			}
-			if (candidate != null && usagePublisher != null) {
-				String evidence = usagePublisher.publish(tenantId, productId, batch, acceptedRecords,
-						candidate.acceptedEvidenceKey());
-				if (!evidence.startsWith("DONE:")) {
-					throw new SinkUnavailableException("Redis did not confirm logs usage evidence", null);
-				}
+			if (candidate != null) {
+				confirmUsageEvidence(usagePublisher.publish(tenantId, productId, batch, acceptedRecords,
+						candidate.acceptedEvidenceKey()), "logs");
 			}
 			else {
 				publisher.publish(tenantId, productId, batch, acceptedRecords);
 			}
-			if (candidate != null) {
+			if (candidate != null && candidate.state() == br.com.lhamalog.collector.usage.outbox.UsageOutboxState.PENDING) {
 				usageRecorder.accept(candidate);
 			}
 		}
@@ -112,4 +113,18 @@ public class PublishingLogsSink implements LogsSink {
 		}
 	}
 
+	static void confirmUsageEvidence(String evidence, String domain) {
+		if (evidence != null && evidence.startsWith("DONE:")) {
+			return;
+		}
+		if (evidence != null && evidence.startsWith("CLAIMED:")) {
+			throw new SinkUnavailableException(domain + " usage evidence is claimed pending confirmation", null);
+		}
+		if (evidence != null && evidence.startsWith("ABANDONED")) {
+			throw new SinkUnavailableException(domain + " usage evidence was abandoned", null);
+		}
+		throw new SinkUnavailableException("Redis did not confirm " + domain + " usage evidence", null);
+	}
+
 }
+

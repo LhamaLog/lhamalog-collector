@@ -25,11 +25,13 @@ class UsageOutboxObservabilityTest {
 		observability.transition(UsageOutboxState.PENDING);
 		observability.retry(item.accept().retry(created.plusSeconds(1), "NETWORK"));
 		observability.pendingAge(item, created.plusSeconds(61), Duration.ofSeconds(60));
+		observability.suspended(item.accept());
 		observability.ambiguous();
 		observability.evidenceExpiryConfigured(Duration.ofDays(7));
 
 		assertThat(meters.get("lhamalog.usage.outbox.transitions").tag("state", "PENDING").counter().count()).isOne();
 		assertThat(meters.get("lhamalog.usage.outbox.retries").counter().count()).isOne();
+		assertThat(meters.get("lhamalog.usage.outbox.suspended").counter().count()).isOne();
 		assertThat(meters.get("lhamalog.usage.outbox.pending.over_grace").counter().count()).isOne();
 		assertThat(meters.get("lhamalog.usage.outbox.ambiguous").counter().count()).isOne();
 		assertThat(meters.get("lhamalog.usage.outbox.pending.age.seconds").gauge().value()).isEqualTo(61);

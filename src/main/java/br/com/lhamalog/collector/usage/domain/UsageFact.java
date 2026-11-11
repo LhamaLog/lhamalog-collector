@@ -8,6 +8,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
 
+/** Immutable measurement of one accepted OTLP batch for a tenant, product and domain. acceptedAt is observational and is not part of idempotency. */
 public record UsageFact(
 		String usageFactId,
 		String batchId,
@@ -47,6 +48,14 @@ public record UsageFact(
 		String batchId = sha256(tenantId, productId, domain.name(), String.join("\u001f", acceptedRecordIds));
 		return new UsageFact(sha256(tenantId, productId, domain.name(), batchId), batchId, tenantId, productId, domain,
 				acceptedRecordIds, acceptedRecordIds.size(), acceptedBytes, acceptedAt, 1);
+	}
+
+	public boolean sameImmutableContent(UsageFact other) {
+		return other != null && usageFactId.equals(other.usageFactId) && batchId.equals(other.batchId)
+				&& tenantId.equals(other.tenantId) && productId.equals(other.productId) && domain == other.domain
+				&& acceptedRecordIds.equals(other.acceptedRecordIds)
+				&& acceptedRecordCount == other.acceptedRecordCount && acceptedBytes == other.acceptedBytes
+				&& schemaVersion == other.schemaVersion;
 	}
 
 	private static void requireText(String value, String name) {

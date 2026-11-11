@@ -41,7 +41,7 @@ public final class UsageAcceptanceReconciler {
 		this.evidence = evidence;
 		this.clock = clock;
 		this.properties = properties;
-		this.observability = observability;
+		this.observability = observability == null ? UsageOutboxObservability.NOOP : observability;
 	}
 
 	@EventListener(ApplicationReadyEvent.class)
@@ -58,25 +58,23 @@ public final class UsageAcceptanceReconciler {
 
 	public void reconcilePendingBefore(Instant graceDeadline) {
 		for (UsageOutboxItem item : outbox.findPendingBefore(graceDeadline)) {
-			if (observability != null && properties != null) {
+			if (properties != null) {
 				observability.pendingAge(item, clock.instant(), properties.grace());
 			}
 			String value = evidence.resolvePending(item.acceptedEvidenceKey());
 			if (value.startsWith("ABANDONED")) {
-				if (outbox.compareAndSet(item.id(), UsageOutboxState.PENDING, item.abandon()) && observability != null) {
+				if (outbox.compareAndSet(item, item.abandon())) {
 					observability.transition(UsageOutboxState.ABANDONED);
 				}
 			}
 			else if (value.startsWith("DONE")) {
-				if (outbox.compareAndSet(item.id(), UsageOutboxState.PENDING, item.accept()) && observability != null) {
+				if (outbox.compareAndSet(item, item.accept())) {
 					observability.transition(UsageOutboxState.ACCEPTED);
 				}
 			}
 			else if (value.startsWith("CLAIMED")) {
-				if (outbox.compareAndSet(item.id(), UsageOutboxState.PENDING, item.markAmbiguous())) {
-					if (observability != null) {
-						observability.ambiguous();
-					}
+				if (outbox.compareAndSet(item, item.markAmbiguous())) {
+					observability.ambiguous();
 					log.error("Usage fact {} is ambiguous after Redis claim", item.id());
 				}
 			}

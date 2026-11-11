@@ -178,8 +178,6 @@ public abstract class AbstractStreamPublisher<T> {
 		StringBuilder script = new StringBuilder("""
 				local current = redis.call('GET', KEYS[2])
 				if current then
-				  if string.sub(current, 1, 5) == 'DONE:' then return current end
-				  if current == 'ABANDONED' then return current end
 				  return current
 				end
 				redis.call('SET', KEYS[2], 'CLAIMED:' .. ARGV[1], 'EX', ARGV[2])

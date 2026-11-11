@@ -23,36 +23,34 @@ public final class UsageFactRecorder {
 	public UsageFactRecorder(UsageOutboxRepository outbox, Clock clock, UsageOutboxObservability observability) {
 		this.outbox = outbox;
 		this.clock = clock;
-		this.observability = observability;
+		this.observability = observability == null ? br.com.lhamalog.collector.usage.core.UsageOutboxObservability.NOOP : observability;
 	}
 
 	public UsageOutboxItem recordPending(UsageFact fact) {
 		UsageOutboxItem item = outbox.insertPending(fact, clock.instant());
-		if (observability != null) {
-			observability.transition(item.state());
-		}
+		observability.transition(item.state());
 		return item;
 	}
 
 	public boolean accept(UsageOutboxItem item) {
-		boolean accepted = outbox.compareAndSet(item.id(), UsageOutboxState.PENDING, item.accept());
-		if (accepted && observability != null) {
+		boolean accepted = outbox.compareAndSet(item, item.accept());
+		if (accepted) {
 			observability.transition(UsageOutboxState.ACCEPTED);
 		}
 		return accepted;
 	}
 
 	public boolean abandon(UsageOutboxItem item) {
-		boolean abandoned = outbox.compareAndSet(item.id(), UsageOutboxState.PENDING, item.abandon());
-		if (abandoned && observability != null) {
+		boolean abandoned = outbox.compareAndSet(item, item.abandon());
+		if (abandoned) {
 			observability.transition(UsageOutboxState.ABANDONED);
 		}
 		return abandoned;
 	}
 
 	public boolean markAmbiguous(UsageOutboxItem item) {
-		boolean ambiguous = outbox.compareAndSet(item.id(), UsageOutboxState.PENDING, item.markAmbiguous());
-		if (ambiguous && observability != null) {
+		boolean ambiguous = outbox.compareAndSet(item, item.markAmbiguous());
+		if (ambiguous) {
 			observability.ambiguous();
 		}
 		return ambiguous;

@@ -67,6 +67,41 @@ class UsageOutboxRecoveryIntegrationTest {
 		assertThat(outbox.findById(fact.usageFactId()).orElseThrow().state()).isEqualTo(UsageOutboxState.SYNCED);
 	}
 
+	@Test
+	void onlyOneOfTwoConcurrentWorkersSendsTheFact() throws Exception {
+		UsageFact fact = UsageFact.create("tenant", "product", UsageDomain.LOGS, List.of("record-concurrent"), 7,
+				CREATED);
+		UsageOutboxItem pending = outbox.insertPending(fact, CREATED);
+		assertThat(outbox.compareAndSet(pending, pending.accept())).isTrue();
+
+		java.util.concurrent.atomic.AtomicInteger sends = new java.util.concurrent.atomic.AtomicInteger();
+		UsageFactsClient slow = sent -> {
+			sends.incrementAndGet();
+			Thread.sleep(150);
+			return 201;
+		};
+		UsageOutboxWorker first = new UsageOutboxWorker(outbox, slow, properties(),
+				Clock.fixed(CREATED.plusSeconds(1), ZoneOffset.UTC), "worker-a");
+		UsageOutboxWorker second = new UsageOutboxWorker(outbox, slow, properties(),
+				Clock.fixed(CREATED.plusSeconds(1), ZoneOffset.UTC), "worker-b");
+		var pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+		try {
+			pool.invokeAll(List.of(ExecutorsCallable(first), ExecutorsCallable(second)));
+		}
+		finally {
+			pool.shutdownNow();
+		}
+		assertThat(sends.get()).isEqualTo(1);
+		assertThat(outbox.findById(fact.usageFactId()).orElseThrow().state()).isEqualTo(UsageOutboxState.SYNCED);
+	}
+
+	private static java.util.concurrent.Callable<Void> ExecutorsCallable(UsageOutboxWorker worker) {
+		return () -> {
+			worker.runOnce();
+			return null;
+		};
+	}
+
 	private static UsageProperties properties() {
 		return new UsageProperties(true, new UsageProperties.Core("http://core.invalid"), Duration.ofSeconds(5),
 				Duration.ofSeconds(1), Duration.ofMinutes(1), Duration.ofDays(7), Duration.ofMillis(1), Duration.ofSeconds(1));
