@@ -17,12 +17,13 @@ import java.util.UUID;
  * identical record in the batch: a client retry yields the same ids and two identical records stay distinct.
  * The batch id is a version 3 UUID over the signal and the record ids, so a retry also keeps the batch id.
  */
-final class RecordIds {
+public final class RecordIds {
 
 	private RecordIds() {
 	}
 
-	static List<String> of(String tenantId, String productId, List<? extends Scoped<? extends MessageLite>> records) {
+	public static List<String> of(String tenantId, String productId,
+			List<? extends Scoped<? extends MessageLite>> records) {
 		List<String> ids = new ArrayList<>(records.size());
 		Map<UUID, Integer> occurrences = new HashMap<>();
 		for (Scoped<? extends MessageLite> scoped : records) {

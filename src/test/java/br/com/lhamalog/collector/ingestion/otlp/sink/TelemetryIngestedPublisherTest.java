@@ -7,6 +7,7 @@ import br.com.lhamalog.collector.ingestion.otlp.domain.Scoped;
 import br.com.lhamalog.collector.messaging.MessagingProperties;
 import br.com.lhamalog.collector.messaging.MetadataKeys;
 import br.com.lhamalog.collector.messaging.OutboundMessage;
+import br.com.lhamalog.collector.quota.ReservationCorrelation;
 import com.google.protobuf.ByteString;
 import io.opentelemetry.proto.common.v1.AnyValue;
 import io.opentelemetry.proto.common.v1.InstrumentationScope;
@@ -84,7 +85,19 @@ class TelemetryIngestedPublisherTest {
 		assertThat(logs("tenant-1", INFO).metadata()).containsEntry(MetadataKeys.TENANT_ID, "tenant-1")
 			.containsEntry(MetadataKeys.PRODUCT_ID, "product-a")
 			.containsEntry(MetadataKeys.CORRELATION_ID, "corr-1")
-			.containsEntry(MetadataKeys.TRACE_ID, "00000000000000000000000000000001");
+			.containsEntry(MetadataKeys.TRACE_ID, "00000000000000000000000000000001")
+			.doesNotContainKey(MetadataKeys.RESERVATION_ID);
+	}
+
+	@Test
+	void metadataIncludesOptionalReservationIdOnlyWhenCorrelationIsSet() {
+		ReservationCorrelation.set("reservation-42");
+		try {
+			assertThat(logs("tenant-1", INFO).metadata()).containsEntry(MetadataKeys.RESERVATION_ID, "reservation-42");
+		}
+		finally {
+			ReservationCorrelation.clear();
+		}
 	}
 
 	@Test

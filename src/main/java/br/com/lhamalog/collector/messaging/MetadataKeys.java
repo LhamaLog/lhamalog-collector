@@ -13,6 +13,9 @@ public final class MetadataKeys {
 
 	public static final String TRACE_ID = "traceId";
 
+	/** Optional Core reservation id carried only for quota traceability. */
+	public static final String RESERVATION_ID = "reservationId";
+
 	private MetadataKeys() {
 	}
 

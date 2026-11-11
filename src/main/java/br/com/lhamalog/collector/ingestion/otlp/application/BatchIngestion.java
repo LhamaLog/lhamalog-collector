@@ -7,7 +7,12 @@ import br.com.lhamalog.collector.ingestion.otlp.domain.BatchAssessment;
 import br.com.lhamalog.collector.ingestion.otlp.domain.IngestionDecision;
 import br.com.lhamalog.collector.ingestion.otlp.sink.SinkRejectedException;
 import br.com.lhamalog.collector.ingestion.otlp.sink.SinkUnavailableException;
+import br.com.lhamalog.collector.quota.ReservationCorrelation;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -25,11 +30,17 @@ import org.slf4j.LoggerFactory;
 final class BatchIngestion {
 
 	private static final Logger log = LoggerFactory.getLogger(BatchIngestion.class);
+	private static final ExecutorService SANITIZATION_EXECUTOR = Executors.newFixedThreadPool(4, runnable -> {
+		Thread thread = new Thread(runnable, "otlp-sanitize");
+		thread.setDaemon(true);
+		return thread;
+	});
+	private static final long SANITIZATION_TIMEOUT_SECONDS = 5;
 
 	@FunctionalInterface
-	interface Delivery<T> {
+	interface Delivery<R, T> {
 
-		void deliver(String tenantId, String productId, List<T> records);
+		void deliver(String tenantId, String productId, R request, List<T> records);
 
 	}
 
@@ -39,7 +50,20 @@ final class BatchIngestion {
 	}
 
 	static <R, T> IngestionDecision run(TokenValidator tokens, String bearerToken, OtlpPayload<R> payload,
-			Function<R, BatchAssessment<T>> assessment, Delivery<T> sink, String recordName, String rejectionReason) {
+			Function<R, BatchAssessment<T>> assessment, Delivery<R, T> sink, String recordName, String rejectionReason) {
+		return run(tokens, bearerToken, payload, assessment, sink, recordName, rejectionReason, null);
+	}
+
+	static <R, T> IngestionDecision run(TokenValidator tokens, String bearerToken, OtlpPayload<R> payload,
+			Function<R, BatchAssessment<T>> assessment, Delivery<R, T> sink, String recordName, String rejectionReason,
+			QuotaGate<R, T> quota) {
+		return run(tokens, bearerToken, payload, assessment, sink, recordName, rejectionReason, quota,
+				BatchSanitizer.identity());
+	}
+
+	static <R, T> IngestionDecision run(TokenValidator tokens, String bearerToken, OtlpPayload<R> payload,
+			Function<R, BatchAssessment<T>> assessment, Delivery<R, T> sink, String recordName, String rejectionReason,
+			QuotaGate<R, T> quota, BatchSanitizer<R, T> sanitizer) {
 		TokenValidationResult auth = tokens.validate(bearerToken);
 		TokenValidationResult.Valid valid;
 		switch (auth) {
@@ -66,15 +90,70 @@ final class BatchIngestion {
 			return new IngestionDecision.InvalidPayload(IngestionDecision.Reason.ALL_RECORDS_INVALID,
 					"all " + batch.rejectedCount() + " " + recordName + " are invalid: " + rejectionReason);
 		}
+		final List<T> eligible = batch.valid();
+		List<T> accepted = eligible;
+		String reservationId = null;
+		if (quota != null) {
+			CompletableFuture<QuotaGate.Reservation> reservationFuture = CompletableFuture.supplyAsync(
+					() -> quota.reserve(valid.tenantId(), valid.productId(), request, eligible), SANITIZATION_EXECUTOR);
+			CompletableFuture<List<T>> sanitizerFuture = CompletableFuture.supplyAsync(
+					() -> sanitizer.sanitize(request, eligible), SANITIZATION_EXECUTOR);
+			QuotaGate.Reservation reservation;
+			try {
+				reservation = reservationFuture.get(SANITIZATION_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+			}
+			catch (Exception unavailable) {
+				sanitizerFuture.cancel(true);
+				quota.coreUnavailable();
+				return new IngestionDecision.QuotaUnavailable();
+			}
+			switch (reservation.outcome()) {
+				case INSUFFICIENT_BALANCE -> {
+					return new IngestionDecision.QuotaExceeded();
+				}
+				case NO_PLAN, UNAVAILABLE -> {
+					if (reservation.outcome() == QuotaGate.Reservation.Outcome.UNAVAILABLE) quota.coreUnavailable();
+					return new IngestionDecision.QuotaUnavailable();
+				}
+				case AUTHORIZED -> reservationId = reservation.reservationId();
+			}
+			try {
+				accepted = sanitizerFuture.get(SANITIZATION_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+			}
+			catch (Exception failure) {
+				releaseQuietly(quota, reservationId);
+				if (failure instanceof java.util.concurrent.ExecutionException
+						&& failure.getCause() instanceof BatchSanitizer.RejectedException) {
+					return new IngestionDecision.InvalidPayload(IngestionDecision.Reason.MALFORMED,
+							"batch rejected during sanitization");
+				}
+				return new IngestionDecision.QuotaUnavailable();
+			}
+			try {
+				quota.confirm(reservationId);
+			}
+			catch (RuntimeException unavailable) {
+				quota.coreUnavailable();
+				return new IngestionDecision.QuotaUnavailable();
+			}
+		}
 		try {
-			sink.deliver(valid.tenantId(), valid.productId(), batch.valid());
+			if (reservationId != null) {
+				ReservationCorrelation.set(reservationId);
+			}
+			sink.deliver(valid.tenantId(), valid.productId(), request, accepted);
 		}
 		catch (SinkUnavailableException ex) {
+			postDebitFailure(quota);
+			refundQuietly(quota, reservationId, "SINK_UNAVAILABLE");
+			// The successful confirm intentionally remains durable; the refund outbox compensates this case.
 			log.warn("Destination did not confirm {} {} of product {}: {}", batch.valid().size(), recordName,
 					valid.productId(), ex.getMessage());
-			return new IngestionDecision.DestinationUnavailable(ex.retryAfterSeconds());
+			return new IngestionDecision.DestinationUnavailable(postDebitRetryAfter(reservationId, ex.retryAfterSeconds()));
 		}
 		catch (SinkRejectedException ex) {
+			postDebitFailure(quota);
+			refundQuietly(quota, reservationId, "SINK_REJECTED");
 			log.warn("Destination refused {} of {} {} of product {} as invalid data: {}", ex.rejectedCount(),
 					batch.valid().size(), recordName, valid.productId(), ex.getMessage());
 			int rejected = batch.rejectedCount() + ex.rejectedCount();
@@ -86,11 +165,49 @@ final class BatchIngestion {
 			return new IngestionDecision.PartiallyAccepted(ex.acceptedCount(), rejected,
 					rejected + " " + recordName + " rejected: " + message);
 		}
+		catch (RuntimeException ex) {
+			postDebitFailure(quota);
+			refundQuietly(quota, reservationId, "SINK_FAILURE");
+			log.warn("Destination failed while delivering {} {} of product {}", batch.valid().size(), recordName,
+					valid.productId(), ex);
+			return new IngestionDecision.DestinationUnavailable(
+					postDebitRetryAfter(reservationId, SinkUnavailableException.DEFAULT_RETRY_AFTER_SECONDS));
+		}
+		finally {
+			ReservationCorrelation.clear();
+		}
 		if (batch.rejectedCount() == 0) {
 			return new IngestionDecision.Accepted(batch.valid().size());
 		}
 		return new IngestionDecision.PartiallyAccepted(batch.valid().size(), batch.rejectedCount(),
 				batch.rejectedCount() + " " + recordName + " rejected: " + rejectionReason);
+	}
+
+	private static long postDebitRetryAfter(String reservationId, long fallbackSeconds) {
+		return reservationId != null ? 120L : fallbackSeconds;
+	}
+
+	private static <R, T> void postDebitFailure(QuotaGate<R, T> quota) {
+		if (quota != null) quota.postDebitWriteFailure();
+	}
+
+	private static <R, T> void releaseQuietly(QuotaGate<R, T> quota, String reservationId) {
+		try {
+			quota.release(reservationId);
+		}
+		catch (RuntimeException releaseFailure) {
+			log.warn("Could not release failed reservation {}", reservationId, releaseFailure);
+		}
+	}
+
+	private static <R, T> void refundQuietly(QuotaGate<R, T> quota, String reservationId, String reason) {
+		if (quota == null || reservationId == null) return;
+		try {
+			quota.refund(reservationId, reason);
+		}
+		catch (RuntimeException enqueueFailure) {
+			log.error("Could not enqueue refund for confirmed reservation {}", reservationId, enqueueFailure);
+		}
 	}
 
 	private static String describeRejections(int byAssessment, int byDestination, String recordName,
