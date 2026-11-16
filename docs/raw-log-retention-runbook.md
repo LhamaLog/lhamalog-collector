@@ -4,7 +4,7 @@
 
 - Cada tenant grava em streams OpenObserve próprios: `{prefix}_{tenantSanitizado}` (com hash se necessário). Prefixos: `OPENOBSERVE_LOGS_STREAM` / `OPENOBSERVE_TRACES_STREAM` (default `logs` / `traces`).
 - A retenção do stream (`data_retention` em dias) vem de `retentionDays` na resposta de reserva do Core (FREE 7, STARTER 15, PRO 30, BUSINESS/ENTERPRISE 90).
-- Retenção enviada pelo Core = maior `retencaoDias` entre as assinaturas ATIVA e INADIMPLENTE **dentro da carência** do tenant (INADIMPLENTE vencida conta como suspensa e fica fora); assinatura antiga sem plano conta como **FREE (7 dias)** (decisão do Michel, 16/11/2026 16:36).
+- Retenção enviada pelo Core = maior `retencaoDias` entre as assinaturas ACTIVE e DELINQUENT **dentro da carência** do tenant (DELINQUENT vencida conta como suspensa e fica fora); assinatura antiga sem plano conta como **FREE (7 dias)** (decisão do Michel, 16/11/2026 16:36).
 - Sem `retentionDays` na resposta (Core antigo, quota desligada ou tenant sem assinatura considerável): o lote vai ao stream do tenant e o Collector **não** altera o stream; vale a retenção global `ZO_COMPACT_DATA_RETENTION_DAYS`. Esse ramo existe só por compatibilidade.
 - A mensagem Redis (`lhamalog:stream:logs` / `traces`) continua no mesmo schema; só o valor de `openobserve.stream` aponta para o stream do tenant.
 

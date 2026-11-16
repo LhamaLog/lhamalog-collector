@@ -154,7 +154,7 @@ No local as portas são 4328/4327 porque 4318/4317 já são do OpenTelemetry Col
 
 **Servidor HTTP:** o OTLP/HTTP usa o servidor HTTP do JDK, com limites: até 200 requisições simultâneas (`OTLP_RECEIVER_HTTP_MAX_CONCURRENT_REQUESTS`; acima disso, 503 + `Retry-After: 1`), 1000 conexões (`OTLP_RECEIVER_HTTP_MAX_CONNECTIONS`), 30 s para ler a requisição e escrever a resposta (`OTLP_RECEIVER_HTTP_READ_TIMEOUT` / `OTLP_RECEIVER_HTTP_WRITE_TIMEOUT`), 30 s de conexão ociosa (`OTLP_RECEIVER_HTTP_IDLE_TIMEOUT`) e 200 conexões ociosas (`OTLP_RECEIVER_HTTP_MAX_IDLE_CONNECTIONS`). Esses tempos viram propriedades `sun.net.httpserver.*`, que valem para a JVM inteira; um `-Dsun.net.httpserver...` passado na linha de comando tem prioridade. Em produção, **coloque um proxy reverso** (nginx, Traefik ou o balanceador da nuvem) na frente da porta 4318, com TLS, limite de corpo e de taxa; o servidor do JDK não deve ficar exposto direto na internet. `OTLP_RECEIVER_MAX_MESSAGE_SIZE` precisa ser maior que 0 e no máximo 2147483647 bytes, senão o serviço não sobe.
 
-**Redis Stream (LLT-182):** depois que o lote passa pela autenticação, pela validação e é gravado no OpenObserve, o collector publica **uma referência por lote** (não o conteúdo dos logs) para a Varredura: logs em `lhamalog:stream:logs` (evento `log.ingested`, `schemaVersion` 1) e traces em `lhamalog:stream:traces` (evento `trace.ingested`, `schemaVersion` 1), com `XADD` e `MAXLEN ~` (padrão 100000 via `LHAMALOG_MESSAGING_STREAM_LOGS_MAX_LEN` e `LHAMALOG_MESSAGING_STREAM_TRACES_MAX_LEN`). Os atributos OTel ficam no OpenObserve; cada documento leva `lhamalog_batch_id` e `lhamalog_record_id`, e a referência traz organização, stream, `batchId` e a faixa de `_timestamp` para o Finder carregar o lote. O `tenantId` vai só nos metadados do envelope; prioridade e criticidade vêm só da severidade. Lote sem token válido, inválido ou vazio nunca chega ao stream. O `idempotencyId` é o `batchId` do lote, determinístico: o reenvio do mesmo lote repete o id e a Varredura deduplica por lote. Contrato em `specs/002-tenant-product-logs/contracts/log-ingested-stream.md`. No ambiente local o Redis exige senha: defina `REDIS_PASSWORD` em `infra/local/.env`.
+**Redis Stream (LLT-182):** depois que o lote passa pela autenticação, pela validação e é gravado no OpenObserve, o collector publica **uma referência por lote** (não o conteúdo dos logs) para a Varredura: logs em `lhamalog:stream:logs` (evento `log.ingested`, `schemaVersion` 1) e traces em `lhamalog:stream:traces` (evento `trace.ingested`, `schemaVersion` 1), com `XADD` e `MAXLEN ~` (padrão 100000 via `LHAMALOG_MESSAGING_STREAM_LOGS_MAX_LEN` e `LHAMALOG_MESSAGING_STREAM_TRACES_MAX_LEN`). Os atributos OTel ficam no OpenObserve; cada documento leva `lhamalog_batch_id` e `lhamalog_record_id`, e a referência traz organização, stream, `batchId` e a faixa de `_timestamp` para o Finder carregar o lote. O `tenantId` vai só nos metadados do envelope; prioridade e criticidade vêm só da severidade. Lote sem token válido, inválido ou vazio nunca chega ao stream. O `idempotencyId` é o `batchId` do lote, determinístico: o reenvio do mesmo lote repete o id e a Varredura deduplica por lote (**nunca** por `metadata.correlationId`). O campo `metadata.correlationId` já existia; a partir da LLT-183 (T050) ele carrega o correlation id da requisição (`X-Correlation-Id` / `x-correlation-id`, ou o UUID gerado na entrada) — string opaca até 64 caracteres (`^[A-Za-z0-9._-]{1,64}$`), pode se repetir entre mensagens; a DLQ reutiliza o mesmo metadata. Contrato Finder: `specs/007-plan-rate-and-size-limits/contracts/stream-correlation-id.md`. Contrato de referência: `specs/002-tenant-product-logs/contracts/log-ingested-stream.md`. No ambiente local o Redis exige senha: defina `REDIS_PASSWORD` em `infra/local/.env`.
 
 ## Retry e DLQ (LLT-184)
 
@@ -215,12 +215,66 @@ Após autenticação, a ordem é **taxa → tamanho → reserva**. Propriedades 
 | `lhamalog.quota.unavailable-max-attempts` | `5` |
 | `lhamalog.quota.unavailable-attempt-ttl` | `30m` |
 
-Carência de assinatura INADIMPLENTE (`lhamalog.subscription.delinquency-grace`, default 15d) fica no **Core**. Runbook: [docs/rate-and-size-limits-runbook.md](docs/rate-and-size-limits-runbook.md).
+Carência de assinatura DELINQUENT (antes `INADIMPLENTE`) (`lhamalog.subscription.delinquency-grace`, default 15d) fica no **Core**. Runbook: [docs/rate-and-size-limits-runbook.md](docs/rate-and-size-limits-runbook.md).
+
+### Clientes OTLP e janela “Core indisponível”
+
+Com Core fora, o Collector responde **503** / gRPC **UNAVAILABLE** com Retry-After / RetryInfo **300 s** até **5** tentativas do mesmo lote (~25 min); na 6ª, **500** / **INTERNAL** e o lote é perdido. Isso só funciona se o exportador continuar retentando por esse tempo.
+
+Exporters `otlp` / `otlphttp` do **OpenTelemetry Collector** usam `retry_on_failure` do [exporterhelper](https://github.com/open-telemetry/opentelemetry-collector/blob/main/exporter/exporterhelper/README.md): o default de `max_elapsed_time` é **300s (5 min)** — insuficiente para as 5×300 s. Suba para pelo menos **30m** e use `sending_queue` persistente (`file_storage`). O Collector LhamaLog honra `Retry-After` (HTTP) e `RetryInfo` (gRPC) como atraso de throttle. SDKs de aplicação (ex.: Java) têm políticas de retry curtas: envie via agente OTel Collector.
+
+Exemplo (otlphttp + otlp, token via env, fila persistente):
+
+```yaml
+extensions:
+  file_storage/otc:
+    directory: /var/lib/otelcol/file_storage
+
+exporters:
+  otlphttp/lhamalog:
+    endpoint: https://collector.example:4318
+    headers:
+      Authorization: "Bearer ${env:LHAMALOG_OTLP_TOKEN}"
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 30s
+      max_elapsed_time: 30m
+    sending_queue:
+      enabled: true
+      storage: file_storage/otc
+  otlp/lhamalog:
+    endpoint: collector.example:4317
+    tls:
+      insecure: false
+    headers:
+      Authorization: "Bearer ${env:LHAMALOG_OTLP_TOKEN}"
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 30s
+      max_elapsed_time: 30m
+    sending_queue:
+      enabled: true
+      storage: file_storage/otc
+
+service:
+  extensions: [file_storage/otc]
+  pipelines:
+    logs:
+      receivers: [otlp]
+      exporters: [otlphttp/lhamalog]
+    traces:
+      receivers: [otlp]
+      exporters: [otlp/lhamalog]
+```
+
+Detalhes operacionais: [docs/rate-and-size-limits-runbook.md](docs/rate-and-size-limits-runbook.md), [docs/quota-reservation-runbook.md](docs/quota-reservation-runbook.md).
 
 ## Retenção de logs brutos por plano (LLT-185)
 
 - Stream OpenObserve **por tenant**; retenção (`data_retention`) aplicada via settings quando a reserva do Core traz `retentionDays` (FREE 7 … ENTERPRISE 90).
-- Assinatura antiga sem plano conta como FREE (7 dias) no Core. Sem `retentionDays` na resposta (Core antigo, quota desligada ou tenant sem assinatura ATIVA ou INADIMPLENTE dentro da carência): grava no stream do tenant e mantém a retenção global do OO (`ZO_COMPACT_DATA_RETENTION_DAYS`).
+- Assinatura antiga sem plano conta como FREE (7 dias) no Core. Sem `retentionDays` na resposta (Core antigo, quota desligada ou tenant sem assinatura ACTIVE ou DELINQUENT dentro da carência): grava no stream do tenant e mantém a retenção global do OO (`ZO_COMPACT_DATA_RETENTION_DAYS`).
 - Override dos dias por plano no **Core** (ex.: `LHAMALOG_PLANS_RETENTIONDAYS_FREE=10` ou `lhamalog.plans.retention-days.free=10`); ver o runbook.
 - Métrica: `lhamalog.openobserve.retention.apply{outcome,type}`. Falha de settings não recusa o lote.
 - Runbook (legado `logs`/`traces`, UNION, métricas): [docs/raw-log-retention-runbook.md](docs/raw-log-retention-runbook.md). Spec: `specs/009-raw-log-retention/`.

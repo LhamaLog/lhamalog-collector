@@ -16,7 +16,9 @@ class OtlpHttpQuotaStatusMapperTest {
 
 		assertThat(outcome.status()).isEqualTo(429);
 		assertThat(outcome.headers()).containsEntry("Retry-After", "120");
-		assertThat(((Status) outcome.body()).getCode()).isEqualTo(Code.RESOURCE_EXHAUSTED.getNumber());
+		Status body = (Status) outcome.body();
+		assertThat(body.getCode()).isEqualTo(Code.RESOURCE_EXHAUSTED.getNumber());
+		assertThat(HttpRetryInfo.retryDelaySeconds(body)).isEqualTo(120L);
 	}
 
 	@Test
@@ -26,7 +28,9 @@ class OtlpHttpQuotaStatusMapperTest {
 
 		assertThat(outcome.status()).isEqualTo(503);
 		assertThat(outcome.headers()).containsEntry("Retry-After", "300");
-		assertThat(((Status) outcome.body()).getCode()).isEqualTo(Code.UNAVAILABLE.getNumber());
+		Status body = (Status) outcome.body();
+		assertThat(body.getCode()).isEqualTo(Code.UNAVAILABLE.getNumber());
+		assertThat(HttpRetryInfo.retryDelaySeconds(body)).isEqualTo(300L);
 	}
 
 	@Test
@@ -36,7 +40,9 @@ class OtlpHttpQuotaStatusMapperTest {
 
 		assertThat(outcome.status()).isEqualTo(429);
 		assertThat(outcome.headers()).containsEntry("Retry-After", "5");
-		assertThat(((Status) outcome.body()).getCode()).isEqualTo(Code.RESOURCE_EXHAUSTED.getNumber());
+		Status body = (Status) outcome.body();
+		assertThat(body.getCode()).isEqualTo(Code.RESOURCE_EXHAUSTED.getNumber());
+		assertThat(HttpRetryInfo.retryDelaySeconds(body)).isEqualTo(5L);
 	}
 
 	@Test
@@ -46,6 +52,7 @@ class OtlpHttpQuotaStatusMapperTest {
 
 		assertThat(outcome.status()).isEqualTo(429);
 		assertThat(outcome.headers()).containsEntry("Retry-After", "300");
+		assertThat(HttpRetryInfo.retryDelaySeconds((Status) outcome.body())).isEqualTo(300L);
 	}
 
 	@Test
@@ -55,8 +62,10 @@ class OtlpHttpQuotaStatusMapperTest {
 
 		assertThat(outcome.status()).isEqualTo(500);
 		assertThat(outcome.headers()).isEmpty();
-		assertThat(((Status) outcome.body()).getCode()).isEqualTo(Code.INTERNAL.getNumber());
-		assertThat(((Status) outcome.body()).getMessage()).contains("retry budget exhausted");
+		Status body = (Status) outcome.body();
+		assertThat(body.getCode()).isEqualTo(Code.INTERNAL.getNumber());
+		assertThat(body.getMessage()).contains("retry budget exhausted");
+		HttpRetryInfo.assertNoRetryInfo(body);
 	}
 
 	@Test

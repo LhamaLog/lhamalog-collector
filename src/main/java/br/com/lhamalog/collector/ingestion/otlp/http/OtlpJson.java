@@ -4,6 +4,7 @@ package br.com.lhamalog.collector.ingestion.otlp.http;
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.Message;
 import com.google.protobuf.util.JsonFormat;
+import com.google.rpc.RetryInfo;
 import java.util.Base64;
 import java.util.HexFormat;
 import java.util.Set;
@@ -15,6 +16,9 @@ import tools.jackson.databind.node.ObjectNode;
  * OTLP/JSON encoding (T019). It differs from the canonical protobuf JSON in one point: {@code traceId},
  * {@code spanId} and {@code parentSpanId} are hex strings instead of base64. Enums arrive as integers, which
  * {@link JsonFormat} already accepts; unknown fields are ignored, as the OTLP spec asks.
+ *
+ * <p>Response printing registers {@link RetryInfo} so {@code google.rpc.Status} details (throttle delays)
+ * serialize without failing on packed {@code Any}.
  */
 public final class OtlpJson {
 
@@ -22,9 +26,17 @@ public final class OtlpJson {
 
 	private static final JsonMapper JSON = JsonMapper.builder().build();
 
-	private static final JsonFormat.Parser PARSER = JsonFormat.parser().ignoringUnknownFields();
+	private static final JsonFormat.TypeRegistry TYPE_REGISTRY = JsonFormat.TypeRegistry.newBuilder()
+			.add(RetryInfo.getDescriptor())
+			.build();
 
-	private static final JsonFormat.Printer PRINTER = JsonFormat.printer().omittingInsignificantWhitespace();
+	private static final JsonFormat.Parser PARSER = JsonFormat.parser()
+			.usingTypeRegistry(TYPE_REGISTRY)
+			.ignoringUnknownFields();
+
+	private static final JsonFormat.Printer PRINTER = JsonFormat.printer()
+			.usingTypeRegistry(TYPE_REGISTRY)
+			.omittingInsignificantWhitespace();
 
 	private OtlpJson() {
 	}

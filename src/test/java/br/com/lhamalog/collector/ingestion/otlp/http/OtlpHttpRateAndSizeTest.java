@@ -49,7 +49,9 @@ class OtlpHttpRateAndSizeTest {
 		HttpResponse<byte[]> response = post("/v1/logs", "application/x-protobuf", batch(), null);
 		assertThat(response.statusCode()).isEqualTo(429);
 		assertThat(response.headers().firstValue("Retry-After")).contains("5");
-		assertThat(Status.parseFrom(response.body()).getCode()).isEqualTo(com.google.rpc.Code.RESOURCE_EXHAUSTED.getNumber());
+		Status body = Status.parseFrom(response.body());
+		assertThat(body.getCode()).isEqualTo(com.google.rpc.Code.RESOURCE_EXHAUSTED.getNumber());
+		assertThat(HttpRetryInfo.retryDelaySeconds(body)).isEqualTo(5L);
 		assertThat(delivered).hasValue(0);
 	}
 
@@ -59,6 +61,7 @@ class OtlpHttpRateAndSizeTest {
 		HttpResponse<byte[]> response = post("/v1/logs", "application/x-protobuf", batch(), null);
 		assertThat(response.statusCode()).isEqualTo(429);
 		assertThat(response.headers().firstValue("Retry-After")).contains("300");
+		assertThat(HttpRetryInfo.retryDelaySeconds(Status.parseFrom(response.body()))).isEqualTo(300L);
 	}
 
 	@Test

@@ -33,13 +33,11 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
-/** T011 / T019 / T041 — gRPC rate (Retry-After 5 vs 300) and batch size refusals. */
+/** T011 / T019 / T041 — gRPC rate (RetryInfo 5 vs 300) and batch size refusals. */
 class OtlpGrpcRateAndSizeTest {
 
 	private static final String GOOD = "good-token";
 	private static final Metadata.Key<String> AUTHORIZATION = Metadata.Key.of("authorization",
-			Metadata.ASCII_STRING_MARSHALLER);
-	private static final Metadata.Key<String> RETRY_AFTER = Metadata.Key.of("retry-after",
 			Metadata.ASCII_STRING_MARSHALLER);
 
 	private OtlpGrpcServer server;
@@ -56,31 +54,54 @@ class OtlpGrpcRateAndSizeTest {
 	}
 
 	@Test
-	void rateLimitedIsResourceExhaustedWithRetryAfter5() {
+	void rateLimitedIsResourceExhaustedWithRetryInfo5() {
 		AtomicInteger delivered = new AtomicInteger();
 		start(tenant -> TenantRateLimiter.Verdict.LIMITED, 64 * 1024, delivered);
 		StatusRuntimeException ex = catchThrowableOfType(StatusRuntimeException.class,
 				() -> logs().export(batch(LogRecord.getDefaultInstance())));
 		assertThat(ex.getStatus().getCode()).isEqualTo(Status.Code.RESOURCE_EXHAUSTED);
-		assertThat(ex.getTrailers().get(RETRY_AFTER)).isEqualTo("5");
+		assertThat(GrpcRetryInfo.retryDelaySeconds(ex)).isEqualTo(5L);
+		GrpcRetryInfo.assertNoLegacyRetryAfterTrailer(ex);
 		assertThat(delivered).hasValue(0);
 	}
 
 	@Test
-	void rateBlockedIsResourceExhaustedWithRetryAfter300() {
+	void rateBlockedIsResourceExhaustedWithRetryInfo300() {
 		start(tenant -> TenantRateLimiter.Verdict.BLOCKED, 64 * 1024, new AtomicInteger());
 		StatusRuntimeException ex = catchThrowableOfType(StatusRuntimeException.class,
 				() -> logs().export(batch(LogRecord.getDefaultInstance())));
 		assertThat(ex.getStatus().getCode()).isEqualTo(Status.Code.RESOURCE_EXHAUSTED);
-		assertThat(ex.getTrailers().get(RETRY_AFTER)).isEqualTo("300");
+		assertThat(GrpcRetryInfo.retryDelaySeconds(ex)).isEqualTo(300L);
+		GrpcRetryInfo.assertNoLegacyRetryAfterTrailer(ex);
 	}
 
 	@Test
-	void quotaUnavailableExhaustedIsInternalWithoutRetryAfterTrailer() {
+	void quotaUnavailableExhaustedIsInternalWithoutRetryInfo() {
 		assertThat(OtlpGrpcServer.failureStatus(new IngestionDecision.QuotaUnavailableExhausted()).getCode())
 				.isEqualTo(Status.Code.INTERNAL);
 		assertThat(OtlpGrpcServer.failureStatus(new IngestionDecision.QuotaUnavailableExhausted()).getDescription())
 				.contains("retry budget exhausted");
+		StatusRuntimeException ex = (StatusRuntimeException) OtlpGrpcServer.asFailure(
+				OtlpGrpcServer.failureStatus(new IngestionDecision.QuotaUnavailableExhausted()), null);
+		GrpcRetryInfo.assertNoRetryInfo(ex);
+	}
+
+	@Test
+	void quotaExceededCarriesRetryInfo120() {
+		StatusRuntimeException ex = (StatusRuntimeException) OtlpGrpcServer.asFailure(
+				OtlpGrpcServer.failureStatus(new IngestionDecision.QuotaExceeded()), 120L);
+		assertThat(ex.getStatus().getCode()).isEqualTo(Status.Code.RESOURCE_EXHAUSTED);
+		assertThat(GrpcRetryInfo.retryDelaySeconds(ex)).isEqualTo(120L);
+		GrpcRetryInfo.assertNoLegacyRetryAfterTrailer(ex);
+	}
+
+	@Test
+	void quotaUnavailableCarriesRetryInfo300() {
+		StatusRuntimeException ex = (StatusRuntimeException) OtlpGrpcServer.asFailure(
+				OtlpGrpcServer.failureStatus(new IngestionDecision.QuotaUnavailable(300)), 300L);
+		assertThat(ex.getStatus().getCode()).isEqualTo(Status.Code.UNAVAILABLE);
+		assertThat(GrpcRetryInfo.retryDelaySeconds(ex)).isEqualTo(300L);
+		GrpcRetryInfo.assertNoLegacyRetryAfterTrailer(ex);
 	}
 
 	@Test

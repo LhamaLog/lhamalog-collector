@@ -5,8 +5,9 @@ corpos OTLP nem saldos em tickets, logs compartilhados ou evidências versionada
 
 ## Recusa por saldo insuficiente
 
-**Sintomas:** HTTP `429` / gRPC `RESOURCE_EXHAUSTED` com `Retry-After: 120` (ou equivalente);
-métrica `lhamalog.quota.insufficient`; ausência de OpenObserve, stream/DLQ e `usage_outbox`.
+**Sintomas:** HTTP `429` / gRPC `RESOURCE_EXHAUSTED` com `Retry-After: 120` (HTTP) /
+`RetryInfo` 120 s (gRPC); métrica `lhamalog.quota.insufficient`; ausência de OpenObserve,
+stream/DLQ e `usage_outbox`.
 
 **Ação:**
 
@@ -17,12 +18,12 @@ métrica `lhamalog.quota.insufficient`; ausência de OpenObserve, stream/DLQ e `
 
 ## Core indisponível / sem plano / falha de confirm
 
-**Sintomas:** HTTP `503` / gRPC `UNAVAILABLE` com `Retry-After: 300` (LLT-183; até 5
-tentativas por lote); na 6ª tentativa HTTP `500` / gRPC `INTERNAL` sem Retry-After
-(`reason=quota_unavailable_exhausted`). Métrica `lhamalog.ingestion.refused` com
-`quota_unavailable` / `quota_unavailable_exhausted` (e, no caminho legado de cota,
-`lhamalog.quota.core_unavailable` / `lhamalog.quota.no_plan`); lote não gravado.
-Saldo insuficiente permanece Retry-After **120 s** (seção acima).
+**Sintomas:** HTTP `503` / gRPC `UNAVAILABLE` com `Retry-After: 300` / `RetryInfo` 300 s
+(LLT-183; até 5 tentativas por lote); na 6ª tentativa HTTP `500` / gRPC `INTERNAL` sem
+Retry-After/RetryInfo (`reason=quota_unavailable_exhausted`). Métrica
+`lhamalog.ingestion.refused` com `quota_unavailable` / `quota_unavailable_exhausted`
+(e, no caminho legado de cota, `lhamalog.quota.core_unavailable` / `lhamalog.quota.no_plan`);
+lote não gravado. Saldo insuficiente permanece Retry-After **120 s** (seção acima).
 
 **Ação:**
 
@@ -36,6 +37,10 @@ Saldo insuficiente permanece Retry-After **120 s** (seção acima).
 5. Detalhes do orçamento de 5 tentativas, chaves Redis
    `lhamalog:quota:core-unavailable:*` e propriedades: ver
    [rate-and-size-limits-runbook.md](rate-and-size-limits-runbook.md).
+6. **Cliente:** a proteção de ~25 min só vale se o exporter retentar esse tempo. No OTel
+   Collector, `retry_on_failure.max_elapsed_time` default é 300s — eleve para **30m** e use
+   `sending_queue` + `file_storage`. Exemplo YAML na seção “Clientes OTLP” do
+   [README](../README.md). SDKs de aplicação têm retry curto: envie via agente Collector.
 
 ## Recusa parcial do OpenObserve após `confirm`
 

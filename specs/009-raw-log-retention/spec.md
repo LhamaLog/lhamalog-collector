@@ -22,7 +22,7 @@
 
 | Área | Cobre | Não cobre |
 |------|-------|-----------|
-| **Core (paralelo, outro agente)** | Expor `retentionDays` na resposta de reserva autorizada; valor = máximo `retencaoDias` entre assinaturas ATIVA/INADIMPLENTE do tenant (sem plano = FREE 7) | UI de planos; cobrança |
+| **Core (paralelo, outro agente)** | Expor `retentionDays` na resposta de reserva autorizada; valor = máximo `retencaoDias` entre assinaturas ACTIVE/DELINQUENT do tenant (sem plano = FREE 7) | UI de planos; cobrança |
 | **Collector (este repo)** | Stream OO por tenant; gravar lote no stream do tenant; aplicar retenção via settings com cache; publicar referência Redis com stream do tenant | Migração automática do stream compartilhado `logs`/`traces`; alterar schemaVersion Redis |
 
 ## Clarifications
@@ -43,10 +43,10 @@ Registro: **Decidido pelo Michel em 16/11/2026 às 16:36** (repassado pelo BimBo
 1. **Tenant com vários planos**: usa a **maior** retenção entre as assinaturas consideráveis do tenant (já implementado).
 2. **Assinatura antiga sem plano** (`planTier` ausente): passa a contar como **FREE = 7 dias**. Não fica mais com a retenção global do OpenObserve. O documento não é regravado: só o cálculo assume FREE. Assim o Core sempre envia `retentionDays` quando o tenant tem ao menos uma assinatura considerável.
 3. **Downgrade**: a retenção menor vale imediatamente (o OpenObserve apaga o que passar do novo prazo); sem carência (já implementado).
-4. **Status**: ATIVA conta; INADIMPLENTE só dentro da carência (`lhamalog.subscription.delinquency-grace`, padrão 15 dias, mesma regra da reserva: vencida a partir de `delinquentSince + carência`, inclusive) conta. SUSPENSA e INADIMPLENTE com a carência vencida **não** contam, porque a reserva já trata as duas como suspensas. Ajuste da review do BimBot (16/11/2026 17:36): antes a INADIMPLENTE contava mesmo depois da carência. Ex.: BUSINESS inadimplente há 30 dias + FREE ativa → 7 dias.
+4. **Status** (nomes em inglês desde o merge do Core #11; o Core ainda lê `ATIVA`/`INADIMPLENTE`/`SUSPENSA` gravados): ACTIVE conta; DELINQUENT só dentro da carência (`lhamalog.subscription.delinquency-grace`, padrão 15 dias, mesma regra da reserva: vencida a partir de `delinquentSince + carência`, inclusive) conta. SUSPENDED e DELINQUENT com a carência vencida **não** contam, porque a reserva já trata as duas como suspensas. Ajuste da review do BimBot (16/11/2026 17:36): antes a DELINQUENT contava mesmo depois da carência. Ex.: BUSINESS inadimplente há 30 dias + FREE ativa → 7 dias.
 5. **Nome do campo**: `retentionDays` no fio (mapeia `retencaoDias` da ADR_131) (já implementado).
 
-Consequência no Collector: nenhuma mudança de código. O ramo "sem `retentionDays` → não altera o stream" continua para **Core antigo** (leitor tolerante), **quota desligada** e tenant **sem nenhuma assinatura considerável** (só SUSPENSA ou nenhuma) — nesses casos vale a retenção global `ZO_COMPACT_DATA_RETENTION_DAYS`.
+Consequência no Collector: nenhuma mudança de código. O ramo "sem `retentionDays` → não altera o stream" continua para **Core antigo** (leitor tolerante), **quota desligada** e tenant **sem nenhuma assinatura considerável** (só SUSPENDED ou nenhuma) — nesses casos vale a retenção global `ZO_COMPACT_DATA_RETENTION_DAYS`.
 
 ## User Scenarios & Testing *(mandatory)*
 

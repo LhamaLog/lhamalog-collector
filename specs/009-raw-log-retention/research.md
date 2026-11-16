@@ -22,7 +22,7 @@
 
 - **Decision**: Campo opcional inteiro na JSON de reserva que autoriza; ausente/null/≤0 = desconhecido. Nome inglês no fio; Core mapeia de `retencaoDias`.
 - **Rationale**: Tolerant reader; Collectors/Cores mistos na transição.
-- **Agregação**: máximo entre as assinaturas consideráveis do tenant (ATIVA e INADIMPLENTE dentro da carência; INADIMPLENTE vencida fica fora, ajuste da review de 16/11 17:36); sem `planTier` conta como FREE (7). Decidido pelo Michel em 16/11/2026 16:36.
+- **Agregação**: máximo entre as assinaturas consideráveis do tenant (ACTIVE e DELINQUENT dentro da carência; DELINQUENT vencida fica fora, ajuste da review de 16/11 17:36); sem `planTier` conta como FREE (7). Decidido pelo Michel em 16/11/2026 16:36.
 
 ## R5 — Quando aplicar settings
 

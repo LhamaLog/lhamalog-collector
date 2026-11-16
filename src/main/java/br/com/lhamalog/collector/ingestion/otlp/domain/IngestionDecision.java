@@ -94,7 +94,7 @@ public sealed interface IngestionDecision {
 	/**
 	 * Core cannot identify an active paid allowance, or cannot be reached safely.
 	 *
-	 * @param retryAfterSeconds value for HTTP {@code Retry-After} / gRPC trailer (LLT-183 default 300)
+	 * @param retryAfterSeconds value for HTTP {@code Retry-After} / gRPC {@code RetryInfo} (LLT-183 default 300)
 	 */
 	record QuotaUnavailable(long retryAfterSeconds) implements IngestionDecision {
 		public QuotaUnavailable {

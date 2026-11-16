@@ -27,7 +27,7 @@ FREE 7, STARTER 15, PRO 30, BUSINESS 90, ENTERPRISE 90.
 
 ### Agregação multi-produto (decidido pelo Michel em 16/11/2026 16:36)
 
-Um tenant pode ter uma assinatura por produto com tiers diferentes. O stream OpenObserve é **por tenant**. Core MUST enviar o **máximo** `retencaoDias` entre assinaturas ativas com plano, para que nenhum produto perca dados. Assinaturas consideráveis: ATIVA e INADIMPLENTE só dentro da carência (`lhamalog.subscription.delinquency-grace`, padrão 15 dias, mesma regra da reserva: vencida a partir de `delinquentSince + carência`, inclusive); SUSPENSA e INADIMPLENTE com carência vencida não contam. Assinatura antiga **sem `planTier` conta como FREE (7 dias)**. O Core omite `retentionDays` (null) **somente** quando o tenant não tem nenhuma assinatura considerável.
+Um tenant pode ter uma assinatura por produto com tiers diferentes. O stream OpenObserve é **por tenant**. Core MUST enviar o **máximo** `retencaoDias` entre assinaturas ativas com plano, para que nenhum produto perca dados. Assinaturas consideráveis: ACTIVE e DELINQUENT só dentro da carência (`lhamalog.subscription.delinquency-grace`, padrão 15 dias, mesma regra da reserva: vencida a partir de `delinquentSince + carência`, inclusive); SUSPENDED e DELINQUENT com carência vencida não contam. Assinatura antiga **sem `planTier` conta como FREE (7 dias)**. O Core omite `retentionDays` (null) **somente** quando o tenant não tem nenhuma assinatura considerável.
 
 ## Resposta (não autoriza)
 
