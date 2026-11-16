@@ -123,6 +123,9 @@ docker compose -f infra/local/compose.yaml down
 | Status dos containers | `docker compose -f infra/local/compose.yaml ps` | `make infra-ps` |
 | Logs dos containers | `docker compose -f infra/local/compose.yaml logs -f` | `make infra-logs` |
 | Validar o compose | `docker compose -f infra/local/compose.yaml config -q` | `make infra-config` |
+| Subir observabilidade (Prom/Grafana/Loki) | `docker compose -p lhamalog-observability -f infra/local/compose.observability.yaml up -d` | `make metrics-up` |
+| Parar observabilidade | `docker compose -p lhamalog-observability -f infra/local/compose.observability.yaml down` | `make metrics-down` |
+| Validar compose de métricas | `docker compose -p lhamalog-observability -f infra/local/compose.observability.yaml config -q` | `make metrics-config` |
 
 No Windows, troque `./mvnw` por `.\mvnw.cmd` (o Makefile já faz isso sozinho).
 
@@ -217,6 +220,23 @@ Após autenticação, a ordem é **taxa → tamanho → reserva**. Propriedades 
 
 Carência de assinatura INADIMPLENTE (`lhamalog.subscription.delinquency-grace`, default 15d) fica no **Core**. Runbook: [docs/rate-and-size-limits-runbook.md](docs/rate-and-size-limits-runbook.md).
 
+## Métricas e logs (LLT-187)
+
+Scraping Prometheus na porta de management (`MANAGEMENT_PORT`, default **9464**): `/actuator/prometheus` (junto com `health` e `info`). Em produção essa porta não deve ser pública.
+
+Stack local separado (sem secrets do compose principal):
+
+```bash
+make metrics-up      # Prometheus + Grafana + Loki + Alloy
+make metrics-config  # valida o compose
+make metrics-down
+```
+
+- Catálogo: [specs/008-collector-metrics/metricas.md](specs/008-collector-metrics/metricas.md)
+- Runbook: [docs/observability-runbook.md](docs/observability-runbook.md)
+- Log file local (Alloy): `LHAMALOG_LOG_FILE` / `logs/lhamalog-collector.log`
+- Cinco métricas novas aprovadas: aceite records/bytes, latency, queue size, DLQ size — **sem** tenantId/productId em tags
+
 ## Perfis de execução (ADR_151)
 
 | Perfil | Quando usar | De onde vêm as configurações |
@@ -305,7 +325,7 @@ make run-local                                          # ou: .\mvnw.cmd spring-
 ```
 
 - O `.env` é obrigatório: `MONGO_ROOT_PASSWORD`, `MONGO_APP_PASSWORD`, `OPENOBSERVE_USERNAME` e `OPENOBSERVE_PASSWORD` não têm valor padrão, e o compose para com erro (`defina ... em infra/local/.env`) se faltarem. A aplicação local se conecta com `MONGODB_URI`; se a senha do usuário da aplicação não for a padrão de desenvolvimento, defina `$env:MONGODB_URI="mongodb://<usuario>:<senha>@localhost:27017/lhamalog_collector?authSource=lhamalog_collector"`. A senha do usuário da aplicação só é aplicada na primeira subida (volume vazio).
-- Saúde da aplicação: `http://localhost:8080/actuator/health` (no perfil local mostra o estado de Mongo e Redis).
+- Saúde da aplicação (porta de management, LLT-187): `http://localhost:9464/actuator/health` (no perfil local mostra o estado de Mongo e Redis). Scrape: `http://localhost:9464/actuator/prometheus`.
 - OpenObserve: `http://localhost:5080`, com o usuário e a senha do seu `infra/local/.env`. A aplicação lê `OPENOBSERVE_USERNAME`/`OPENOBSERVE_PASSWORD` do ambiente.
 - Métricas e traces enviados ao collector aparecem em `make infra-logs` (ou `docker compose -f infra/local/compose.yaml logs -f otel-collector`).
 - Parar: `make infra-down` (mantém os dados). Para apagar os dados locais e rodar de novo o script do Mongo: `docker compose -f infra/local/compose.yaml down -v`.
