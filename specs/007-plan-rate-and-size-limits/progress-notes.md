@@ -71,3 +71,11 @@ Arquivo de checkpoint para retomada. Horários em America/Sao_Paulo.
 - Q14 implementado no Core (carência de 15 dias via `delinquentSince` + `lhamalog.subscription.delinquency-grace`).
 - Padrão de logs aplicado no escopo da LLT-183 nos dois repositórios (T045/T046); demais logs e workers ficam em T047–T049; T050 é pergunta ao Michel.
 - Verify às 01:48 (BRT): Collector **292 testes, 0 falhas, 0 erros, 0 ignorados** (exit 0); Core **99 testes, 1 falha** (`CompanyRegistrationHttpTests.adminDeletesRegistrationAndMemberCannot`, 409 esperado / 200 recebido — LLT-175, pré-existente, registrada no Jira). Mongo descartável removido. Linhas de log conferidas no novo formato (`2026-11-16T01:46:54.436-03:00  INFO [lhamalog-core] [cid=none] [main] ...`).
+
+## Checkpoint 16/11/2026 08:50 (BRT) — fase 1 do fechamento (T038, T040, T047, T048, T051)
+
+- T038: E2E na stack local (compose isolado `llt183-e2e`, Mongo descartável do Core, jars do HEAD 908dfe1) — evidência em `e2e-llt183-evidence.md`; teardown feito.
+- T040/T051: runbook de limites por tenant, runbook de reserva corrigido (300 s / 5 tentativas / 500) e README atualizado.
+- T047/T048: demais logs do Collector no formato `event=` e correlation id por item nos workers.
+- Verify às 08:48 (BRT): Collector **295 testes, 0 falhas, 0 erros, 0 ignorados** (exit 0).
+- Abertos: T049 (Core, fora do escopo desta rodada) e T050 (aguarda o Michel). Nada commitado nesta rodada.
