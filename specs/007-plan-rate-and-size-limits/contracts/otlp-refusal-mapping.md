@@ -10,7 +10,7 @@ Ordem de avaliação: **autenticação → taxa → tamanho → reserva (spec006
 
 ## Tabela de mapeamento
 
-| Condição | HTTP protobuf/JSON | gRPC | Retry-After / trailer | Observabilidade |
+| Condição | HTTP protobuf/JSON | gRPC | Retry-After (HTTP) / RetryInfo (gRPC) | Observabilidade |
 |---|---|---|---|---|
 | Taxa excedida (≥ 20 req/s na janela) | `429` | `RESOURCE_EXHAUSTED` | `lhamalog.rate-limit.retry-after` default **5** s | `reason=rate_limit` |
 | Tenant bloqueado (5 violações / 60 s) | `429` | `RESOURCE_EXHAUSTED` | `lhamalog.rate-limit.block-retry-after` default **300** s | `reason=rate_limit_blocked` |
@@ -19,9 +19,11 @@ Ordem de avaliação: **autenticação → taxa → tamanho → reserva (spec006
 | Saldo insuficiente (spec006) | `429` | `RESOURCE_EXHAUSTED` | **120** | `reason=insufficient_balance` |
 | Assinatura SUSPENSA | `403` | `PERMISSION_DENIED` | — | `reason=subscription_suspended` |
 | Sem plano / Core indisponível / timeout / 5xx (tentativas 1..5) | `503` | `UNAVAILABLE` | `lhamalog.quota.unavailable-retry-after` default **300** | `reason=quota_unavailable` |
-| Orçamento Core indisponível esgotado (tentativa 6+) | `500` | `INTERNAL` | **sem** Retry-After | `reason=quota_unavailable_exhausted` |
+| Orçamento Core indisponível esgotado (tentativa 6+) | `500` | `INTERNAL` | **sem** Retry-After / RetryInfo | `reason=quota_unavailable_exhausted` |
 | Redis rate-limit indisponível | conforme política Q13 (default provisório: **não** recusar por taxa; WARN + métrica) [A CONFIRMAR] | idem | — | `reason=rate_limit_store_unavailable` |
 | Redis contador Core-unavailable indisponível | `503` | `UNAVAILABLE` | **300** (sem orçamento) | `reason=quota_unavailable_attempt_store_unavailable` + WARN |
+
+**gRPC:** a orientação de throttle usa `google.rpc.RetryInfo` em `grpc-status-details-bin` (não o trailer ASCII `retry-after`). **HTTP:** header `Retry-After`; no corpo protobuf `google.rpc.Status`, o mesmo atraso também vai em `RetryInfo` nos detalhes.
 
 ## Distinção 429 taxa vs 429 saldo
 

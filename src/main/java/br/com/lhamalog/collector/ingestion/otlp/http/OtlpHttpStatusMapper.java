@@ -3,8 +3,11 @@ package br.com.lhamalog.collector.ingestion.otlp.http;
 
 import br.com.lhamalog.collector.ingestion.otlp.domain.IngestionDecision;
 import br.com.lhamalog.collector.ingestion.otlp.sink.SinkUnavailableException;
+import com.google.protobuf.Any;
+import com.google.protobuf.Duration;
 import com.google.protobuf.Message;
 import com.google.rpc.Code;
+import com.google.rpc.RetryInfo;
 import com.google.rpc.Status;
 import io.opentelemetry.proto.collector.logs.v1.ExportLogsPartialSuccess;
 import io.opentelemetry.proto.collector.logs.v1.ExportLogsServiceResponse;
@@ -22,7 +25,8 @@ import java.util.Map;
  *
  * <p>LLT-183: rate limit → 429 + Retry-After from the decision; application batch too large → 413;
  * suspended → 403; Core unavailable Retry-After from the decision (default 300 s); Core unavailable
- * budget exhausted → 500 without Retry-After.
+ * budget exhausted → 500 without Retry-After. When the body is a {@code google.rpc.Status} and Retry-After
+ * is set, the same delay is also carried as {@link RetryInfo} in Status details (aligned with gRPC).
  */
 public final class OtlpHttpStatusMapper {
 
@@ -47,12 +51,12 @@ public final class OtlpHttpStatusMapper {
 					"token catalog unavailable, retry later");
 			case IngestionDecision.DestinationUnavailable d -> unavailable(d.retryAfterSeconds(), "destination unavailable, retry later");
 			case IngestionDecision.QuotaExceeded q -> new HttpOutcome(429, Map.of("Retry-After", "120"),
-					status(Code.RESOURCE_EXHAUSTED, "ingestion quota exhausted, retry later"));
+					status(Code.RESOURCE_EXHAUSTED, "ingestion quota exhausted, retry later", 120));
 			case IngestionDecision.QuotaUnavailable q -> unavailable(q.retryAfterSeconds(), "ingestion quota unavailable, retry later");
 			case IngestionDecision.QuotaUnavailableExhausted e -> new HttpOutcome(500, Map.of(),
 					status(Code.INTERNAL, "core unavailable: retry budget exhausted, batch dropped"));
 			case IngestionDecision.RateLimited r -> new HttpOutcome(429, Map.of("Retry-After", Long.toString(r.retryAfterSeconds())),
-					status(Code.RESOURCE_EXHAUSTED, "ingestion rate limited, retry later"));
+					status(Code.RESOURCE_EXHAUSTED, "ingestion rate limited, retry later", r.retryAfterSeconds()));
 			case IngestionDecision.BatchTooLarge b -> new HttpOutcome(413, Map.of(),
 					status(Code.RESOURCE_EXHAUSTED, "OTLP batch exceeds the application size limit"));
 			case IngestionDecision.Suspended s -> new HttpOutcome(403, Map.of(),
@@ -86,11 +90,22 @@ public final class OtlpHttpStatusMapper {
 	}
 
 	private static HttpOutcome unavailable(long retryAfterSeconds, String message) {
-		return new HttpOutcome(503, Map.of("Retry-After", Long.toString(retryAfterSeconds)), status(Code.UNAVAILABLE, message));
+		return new HttpOutcome(503, Map.of("Retry-After", Long.toString(retryAfterSeconds)),
+				status(Code.UNAVAILABLE, message, retryAfterSeconds));
 	}
 
 	private static Status status(Code code, String message) {
 		return Status.newBuilder().setCode(code.getNumber()).setMessage(message).build();
+	}
+
+	private static Status status(Code code, String message, long retryAfterSeconds) {
+		return Status.newBuilder()
+				.setCode(code.getNumber())
+				.setMessage(message)
+				.addDetails(Any.pack(RetryInfo.newBuilder()
+						.setRetryDelay(Duration.newBuilder().setSeconds(retryAfterSeconds).build())
+						.build()))
+				.build();
 	}
 
 	private static Message success(Signal signal) {
