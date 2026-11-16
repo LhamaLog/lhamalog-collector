@@ -92,6 +92,7 @@ public class PublishingTracesSink implements TracesSink {
 			return;
 		}
 		UsageOutboxItem candidate = null;
+		boolean published = false;
 		try {
 			if (request != null && usageFacts != null && usageRecorder != null) {
 				UsageFact fact = usageFacts.traces(tenantId, productId, request, acceptedSpans, batch);
@@ -100,16 +101,27 @@ public class PublishingTracesSink implements TracesSink {
 			if (candidate != null) {
 				PublishingLogsSink.confirmUsageEvidence(usagePublisher.publish(tenantId, productId, batch,
 						acceptedSpans, candidate.acceptedEvidenceKey()), "traces");
+				published = true;
 			}
 			else {
 				publisher.publish(tenantId, productId, batch, acceptedSpans);
+				published = true;
 			}
 			if (candidate != null && candidate.state() == br.com.lhamalog.collector.usage.outbox.UsageOutboxState.PENDING) {
 				usageRecorder.accept(candidate);
 			}
 		}
-		catch (MessagePublishException | IllegalStateException ex) {
-			throw new SinkUnavailableException("Message queue did not confirm the traces reference", ex);
+		catch (SinkUnavailableException ex) {
+			throw ex;
+		}
+		catch (RuntimeException ex) {
+			if (published) {
+				throw SinkUnavailableException.afterPublish("traces were published but the usage outbox did not confirm", ex);
+			}
+			if (ex instanceof MessagePublishException || ex instanceof IllegalStateException) {
+				throw new SinkUnavailableException("Message queue did not confirm the traces reference", ex);
+			}
+			throw ex;
 		}
 	}
 

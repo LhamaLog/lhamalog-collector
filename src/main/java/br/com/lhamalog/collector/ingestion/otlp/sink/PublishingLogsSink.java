@@ -92,6 +92,7 @@ public class PublishingLogsSink implements LogsSink {
 			return;
 		}
 		UsageOutboxItem candidate = null;
+		boolean published = false;
 		try {
 			if (request != null && usageFacts != null && usageRecorder != null) {
 				UsageFact fact = usageFacts.logs(tenantId, productId, request, acceptedRecords, batch);
@@ -100,16 +101,27 @@ public class PublishingLogsSink implements LogsSink {
 			if (candidate != null) {
 				confirmUsageEvidence(usagePublisher.publish(tenantId, productId, batch, acceptedRecords,
 						candidate.acceptedEvidenceKey()), "logs");
+				published = true;
 			}
 			else {
 				publisher.publish(tenantId, productId, batch, acceptedRecords);
+				published = true;
 			}
 			if (candidate != null && candidate.state() == br.com.lhamalog.collector.usage.outbox.UsageOutboxState.PENDING) {
 				usageRecorder.accept(candidate);
 			}
 		}
-		catch (MessagePublishException | IllegalStateException ex) {
-			throw new SinkUnavailableException("Message queue did not confirm the logs reference", ex);
+		catch (SinkUnavailableException ex) {
+			throw ex;
+		}
+		catch (RuntimeException ex) {
+			if (published) {
+				throw SinkUnavailableException.afterPublish("logs were published but the usage outbox did not confirm", ex);
+			}
+			if (ex instanceof MessagePublishException || ex instanceof IllegalStateException) {
+				throw new SinkUnavailableException("Message queue did not confirm the logs reference", ex);
+			}
+			throw ex;
 		}
 	}
 

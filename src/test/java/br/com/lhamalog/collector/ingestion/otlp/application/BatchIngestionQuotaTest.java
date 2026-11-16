@@ -70,7 +70,7 @@ class BatchIngestionQuotaTest {
 		List<String> calls = Collections.synchronizedList(new java.util.ArrayList<>());
 		QuotaGate<String, String> quota = new AuthorizedGate() {
 			@Override public void confirm(String id) { calls.add("confirm"); }
-			@Override public void refund(String id, String reason) { calls.add("refund"); }
+			@Override public void refund(String id, String reason) { calls.add("refund:" + reason); }
 		};
 		IngestionDecision result = run(quota, BatchSanitizer.identity(), (tenant, product, request, records) -> {
 			calls.add("sink");
@@ -78,7 +78,57 @@ class BatchIngestionQuotaTest {
 		});
 
 		assertThat(result).isInstanceOf(IngestionDecision.InvalidPayload.class);
-		assertThat(calls).containsExactly("confirm", "sink", "refund");
+		assertThat(calls).containsExactly("confirm", "sink", "refund:SINK_REJECTED");
+	}
+
+	@Test
+	void keepsConfirmAndSkipsRefundWhenDestinationPartiallyAccepts() {
+		List<String> calls = Collections.synchronizedList(new java.util.ArrayList<>());
+		QuotaGate<String, String> quota = new AuthorizedGate() {
+			@Override public void confirm(String id) { calls.add("confirm"); }
+			@Override public void refund(String id, String reason) { calls.add("refund:" + reason); }
+		};
+		IngestionDecision result = BatchIngestion.run(token -> new TokenValidationResult.Valid("tenant", "product"),
+				"token", () -> "body", ignored -> new BatchAssessment<>(List.of("a", "b"), 0),
+				(tenant, product, request, records) -> {
+					calls.add("sink");
+					throw new br.com.lhamalog.collector.ingestion.otlp.sink.SinkRejectedException(1, 1, "partial");
+				}, "records", "invalid", quota, BatchSanitizer.identity());
+
+		assertThat(result).isEqualTo(new IngestionDecision.PartiallyAccepted(1, 1,
+				"1 records rejected: 1 refused by the destination as invalid data"));
+		assertThat(calls).containsExactly("confirm", "sink");
+	}
+
+	@Test
+	void keepsConfirmAndSkipsRefundWhenSinkFailsAfterPublishing() {
+		List<String> calls = Collections.synchronizedList(new java.util.ArrayList<>());
+		QuotaGate<String, String> quota = new AuthorizedGate() {
+			@Override public void confirm(String id) { calls.add("confirm"); }
+			@Override public void refund(String id, String reason) { calls.add("refund:" + reason); }
+		};
+		IngestionDecision result = run(quota, BatchSanitizer.identity(), (tenant, product, request, records) -> {
+			calls.add("sink");
+			throw br.com.lhamalog.collector.ingestion.otlp.sink.SinkUnavailableException.afterPublish("outbox down", null);
+		});
+
+		assertThat(result).isEqualTo(new IngestionDecision.DestinationUnavailable(120));
+		assertThat(calls).containsExactly("confirm", "sink");
+	}
+
+	@Test
+	void refundsWhenSinkFailsBeforePublishing() {
+		List<String> calls = Collections.synchronizedList(new java.util.ArrayList<>());
+		QuotaGate<String, String> quota = new AuthorizedGate() {
+			@Override public void confirm(String id) { calls.add("confirm"); }
+			@Override public void refund(String id, String reason) { calls.add("refund:" + reason); }
+		};
+		run(quota, BatchSanitizer.identity(), (tenant, product, request, records) -> {
+			calls.add("sink");
+			throw new br.com.lhamalog.collector.ingestion.otlp.sink.SinkUnavailableException("down");
+		});
+
+		assertThat(calls).containsExactly("confirm", "sink", "refund:SINK_UNAVAILABLE");
 	}
 
 	@Test

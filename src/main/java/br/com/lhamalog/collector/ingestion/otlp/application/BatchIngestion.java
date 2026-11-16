@@ -145,7 +145,10 @@ final class BatchIngestion {
 		}
 		catch (SinkUnavailableException ex) {
 			postDebitFailure(quota);
-			refundQuietly(quota, reservationId, "SINK_UNAVAILABLE");
+			// Records already on the read stream keep the as-received debit; refund only when nothing was published.
+			if (!ex.publishedBeforeFailure()) {
+				refundQuietly(quota, reservationId, "SINK_UNAVAILABLE");
+			}
 			// The successful confirm intentionally remains durable; the refund outbox compensates this case.
 			log.warn("Destination did not confirm {} {} of product {}: {}", batch.valid().size(), recordName,
 					valid.productId(), ex.getMessage());
@@ -153,7 +156,11 @@ final class BatchIngestion {
 		}
 		catch (SinkRejectedException ex) {
 			postDebitFailure(quota);
-			refundQuietly(quota, reservationId, "SINK_REJECTED");
+			// Partial OpenObserve acceptance already stored records under the reserved (as-received) debit.
+			// Refund only when nothing was stored; otherwise the confirmed debit stays.
+			if (ex.acceptedCount() == 0) {
+				refundQuietly(quota, reservationId, "SINK_REJECTED");
+			}
 			log.warn("Destination refused {} of {} {} of product {} as invalid data: {}", ex.rejectedCount(),
 					batch.valid().size(), recordName, valid.productId(), ex.getMessage());
 			int rejected = batch.rejectedCount() + ex.rejectedCount();
