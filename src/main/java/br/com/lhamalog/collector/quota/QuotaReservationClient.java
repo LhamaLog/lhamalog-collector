@@ -26,7 +26,7 @@ public interface QuotaReservationClient {
 	}
 
 	enum ReservationOutcome {
-		AUTHORIZED, AUTHORIZED_UNLIMITED, INSUFFICIENT_BALANCE, NO_PLAN
+		AUTHORIZED, AUTHORIZED_UNLIMITED, INSUFFICIENT_BALANCE, NO_PLAN, SUSPENDED
 	}
 
 	class UnavailableException extends RuntimeException {

@@ -36,6 +36,7 @@ public final class HttpQuotaReservationClient implements QuotaReservationClient 
 					.POST(HttpRequest.BodyPublishers.ofString(json.writeValueAsString(request))).build(), HttpResponse.BodyHandlers.ofString());
 			return switch (response.statusCode()) {
 				case 200, 201 -> parseOutcome(response.body());
+				case 403 -> parseSuspendedOrUnavailable(response.body());
 				case 409 -> ReservationOutcome.INSUFFICIENT_BALANCE;
 				case 422 -> ReservationOutcome.NO_PLAN;
 				default -> throw new UnavailableException("Core reservation returned " + response.statusCode());
@@ -89,13 +90,36 @@ public final class HttpQuotaReservationClient implements QuotaReservationClient 
 		return URI.create(endpoint.toString() + "/" + reservationId + "/" + operation);
 	}
 
+	/**
+	 * Parses {@code outcome} from Core JSON. Extra fields such as {@code overageBytes} are ignored
+	 * (Jackson tree read); only known {@link ReservationOutcome} names are accepted.
+	 */
 	private ReservationOutcome parseOutcome(String body) {
 		try {
-			String outcome = json.readTree(body).get("outcome").asText();
+			String outcome = json.readTree(body).path("outcome").asString();
+			if (outcome == null || outcome.isBlank()) {
+				throw new UnavailableException("Core reservation response is invalid");
+			}
 			return ReservationOutcome.valueOf(outcome);
 		}
-		catch (JacksonException | IllegalArgumentException | NullPointerException exception) {
+		catch (JacksonException | IllegalArgumentException exception) {
 			throw new UnavailableException("Core reservation response is invalid", exception);
 		}
+	}
+
+	/**
+	 * Core emits HTTP 403 with {@code {"outcome":"SUSPENDED",...}} for suspended subscriptions.
+	 * Any other 403 (or unparseable body) stays fail-closed as {@link UnavailableException}.
+	 */
+	private ReservationOutcome parseSuspendedOrUnavailable(String body) {
+		try {
+			if (ReservationOutcome.SUSPENDED == parseOutcome(body)) {
+				return ReservationOutcome.SUSPENDED;
+			}
+		}
+		catch (UnavailableException ignored) {
+			// fall through to generic 403 unavailable
+		}
+		throw new UnavailableException("Core reservation returned 403");
 	}
 }
