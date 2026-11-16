@@ -34,8 +34,21 @@ public record UsageOutboxItem(
 	}
 
 	public static UsageOutboxItem pending(UsageFact fact, Instant now) {
+		return pending(fact, now, "usage:fact:" + fact.usageFactId());
+	}
+
+	/**
+	 * Fresh PENDING after an {@code ABANDONED} reopen. Uses a new Redis evidence key so the original
+	 * {@code ABANDONED} value keeps fencing a delayed dispatcher of the previous attempt, while the
+	 * resend can claim, publish and measure exactly once.
+	 */
+	public static UsageOutboxItem pendingReopened(UsageFact fact, Instant now) {
+		return pending(fact, now, "usage:fact:" + fact.usageFactId() + ":reopen:" + now.toEpochMilli());
+	}
+
+	private static UsageOutboxItem pending(UsageFact fact, Instant now, String evidenceKey) {
 		return new UsageOutboxItem(fact.usageFactId(), fact, UsageOutboxState.PENDING, 0, now, null, null, null, now,
-				null, "usage:fact:" + fact.usageFactId(), null);
+				null, evidenceKey, null);
 	}
 
 	public UsageOutboxItem accept() {

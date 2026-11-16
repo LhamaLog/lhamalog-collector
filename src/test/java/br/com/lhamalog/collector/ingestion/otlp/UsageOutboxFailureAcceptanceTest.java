@@ -127,6 +127,38 @@ class UsageOutboxFailureAcceptanceTest {
 	}
 
 	@Test
+	void abandonedResendUsesFreshEvidenceKeyAndIsMeasuredOnceWhileOldKeyStaysFenced() {
+		Outbox outbox = new Outbox();
+		ConcurrentHashMap<String, String> evidence = new ConcurrentHashMap<>();
+		AtomicInteger xadds = new AtomicInteger();
+		AtomicInteger publishes = new AtomicInteger();
+
+		assertThat(export(outbox, (tenant, product, batch, records, key) -> {
+			publishes.incrementAndGet();
+			return evidence.computeIfAbsent(key, ignored -> "ABANDONED");
+		})).isInstanceOf(IngestionDecision.DestinationUnavailable.class);
+
+		UsageOutboxItem abandonedAttempt = outbox.only();
+		String originalKey = abandonedAttempt.acceptedEvidenceKey();
+		assertThat(outbox.compareAndSet(abandonedAttempt, abandonedAttempt.abandon())).isTrue();
+		evidence.putIfAbsent(originalKey, "ABANDONED");
+
+		IngestionDecision resend = export(outbox, (tenant, product, batch, records, key) -> {
+			assertThat(key).isNotEqualTo(originalKey);
+			return publishOnce(evidence, key, xadds, "logs");
+		});
+
+		assertThat(resend).isInstanceOf(IngestionDecision.Accepted.class);
+		assertThat(publishes).hasValue(1);
+		assertThat(xadds).hasValue(1);
+		assertThat(outbox.only().state()).isEqualTo(UsageOutboxState.ACCEPTED);
+		assertThat(outbox.only().acceptedEvidenceKey()).contains(":reopen:");
+		assertThat(evidence.get(originalKey)).isEqualTo("ABANDONED");
+		assertThat(publishOnce(evidence, originalKey, xadds, "logs")).isEqualTo("ABANDONED");
+		assertThat(xadds).hasValue(1);
+	}
+
+	@Test
 	void concurrentRetryUsesOneXaddAndBothSeeTheSameDoneEvidence() throws Exception {
 		ConcurrentHashMap<String, String> evidence = new ConcurrentHashMap<>();
 		AtomicInteger xadds = new AtomicInteger();
@@ -257,9 +289,13 @@ class UsageOutboxFailureAcceptanceTest {
 		public synchronized UsageOutboxItem insertPending(UsageFact fact, Instant now) {
 			if (item == null) {
 				item = UsageOutboxItem.pending(fact, now);
+				return item;
 			}
-			else if (!item.fact().equals(fact)) {
+			if (!item.fact().sameImmutableContent(fact)) {
 				throw new IllegalStateException("usage fact id conflicts with immutable content");
+			}
+			if (item.state() == UsageOutboxState.ABANDONED) {
+				item = UsageOutboxItem.pendingReopened(fact, now);
 			}
 			return item;
 		}

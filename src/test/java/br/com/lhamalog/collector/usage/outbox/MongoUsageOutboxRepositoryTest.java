@@ -97,6 +97,9 @@ class MongoUsageOutboxRepositoryTest {
 		assertThat(reopened.state()).isEqualTo(UsageOutboxState.PENDING);
 		assertThat(reopened.fact().acceptedAt()).isEqualTo(resend.acceptedAt());
 		assertThat(reopened.expireAt()).isNull();
+		assertThat(reopened.acceptedEvidenceKey())
+			.isEqualTo("usage:fact:" + fact.usageFactId() + ":reopen:" + Instant.parse("2026-11-09T00:10:00Z").toEpochMilli());
+		assertThat(reopened.acceptedEvidenceKey()).isNotEqualTo(pending.acceptedEvidenceKey());
 	}
 
 	@Test

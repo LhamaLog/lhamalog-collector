@@ -77,7 +77,7 @@ public final class MongoUsageOutboxRepository implements UsageOutboxRepository {
 	}
 
 	private UsageOutboxItem reopenAbandoned(UsageOutboxItem existing, UsageFact fact, Instant now) {
-		UsageOutboxItem reopened = UsageOutboxItem.pending(fact, now);
+		UsageOutboxItem reopened = UsageOutboxItem.pendingReopened(fact, now);
 		Query query = Query.query(Criteria.where("_id").is(existing.id()).and("state").is(UsageOutboxState.ABANDONED));
 		if (!applyReplacement(query, reopened)) {
 			return Optional.ofNullable(mongo.findById(existing.id(), UsageOutboxItem.class, COLLECTION)).orElse(reopened);

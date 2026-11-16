@@ -144,11 +144,44 @@ class PublishingTracesSinkTest {
 		assertThat(outbox.item.state()).isEqualTo(UsageOutboxState.PENDING);
 	}
 
+	@Test
+	void abandonedTraceResendReopensWithFreshEvidenceKeyAndAcceptsOnce() {
+		Outbox outbox = new Outbox();
+		java.util.concurrent.atomic.AtomicInteger publishes = new java.util.concurrent.atomic.AtomicInteger();
+		List<String> keys = new ArrayList<>();
+		PublishingTracesSink sink = new PublishingTracesSink(storing, recording, new UsageFactFactory(Clock.systemUTC()),
+				new UsageFactRecorder(outbox, Clock.systemUTC()), (tenant, product, stored, records, key) -> {
+					keys.add(key);
+					if (publishes.getAndIncrement() == 0) {
+						return "ABANDONED";
+					}
+					return "DONE:traces:1-0";
+				});
+
+		assertThat(export(VALID_TOKEN, sink, batch(VALID))).isInstanceOf(IngestionDecision.DestinationUnavailable.class);
+		String originalKey = outbox.item.acceptedEvidenceKey();
+		assertThat(outbox.compareAndSet(outbox.item.id(), UsageOutboxState.PENDING, outbox.item.abandon())).isTrue();
+
+		assertThat(export(VALID_TOKEN, sink, batch(VALID))).isInstanceOf(IngestionDecision.Accepted.class);
+		assertThat(keys.get(1)).isNotEqualTo(originalKey);
+		assertThat(keys.get(1)).contains(":reopen:");
+		assertThat(outbox.item.state()).isEqualTo(UsageOutboxState.ACCEPTED);
+	}
+
 	private static final class Outbox implements UsageOutboxRepository {
 		private UsageOutboxItem item;
 
 		@Override public UsageOutboxItem insertPending(UsageFact fact, Instant now) {
-			return item = item == null ? UsageOutboxItem.pending(fact, now) : item;
+			if (item == null) {
+				return item = UsageOutboxItem.pending(fact, now);
+			}
+			if (!item.fact().sameImmutableContent(fact)) {
+				throw new IllegalStateException("usage fact id conflicts with immutable content");
+			}
+			if (item.state() == UsageOutboxState.ABANDONED) {
+				return item = UsageOutboxItem.pendingReopened(fact, now);
+			}
+			return item;
 		}
 		@Override public Optional<UsageOutboxItem> findById(String id) { return Optional.ofNullable(item); }
 		@Override public List<UsageOutboxItem> findPendingBefore(Instant deadline) { return List.of(); }

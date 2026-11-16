@@ -2,9 +2,11 @@
 package br.com.lhamalog.collector.ingestion.otlp.application;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import br.com.lhamalog.collector.ingestion.otlp.auth.TokenValidationResult;
 import br.com.lhamalog.collector.ingestion.otlp.domain.IngestionDecision;
+import br.com.lhamalog.collector.ingestion.otlp.domain.Scoped;
 import br.com.lhamalog.collector.ingestion.otlp.sink.BatchStore;
 import br.com.lhamalog.collector.ingestion.otlp.sink.Signal;
 import br.com.lhamalog.collector.ingestion.otlp.sink.StoredBatch;
@@ -28,6 +30,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
 /** LLT-182/184: order OpenObserve then queue; MessagePublishException (after retries+DLQ) is DestinationUnavailable. */
@@ -151,16 +154,77 @@ class PublishingLogsSinkTest {
 		assertThat(outbox.item.state()).isEqualTo(UsageOutboxState.PENDING);
 	}
 
+	@Test
+	void abandonedResendReopensWithFreshEvidenceKeyAndAcceptsOnce() {
+		Outbox outbox = new Outbox();
+		List<String> keys = new ArrayList<>();
+		AtomicInteger publishes = new AtomicInteger();
+		PublishingLogsSink sink = new PublishingLogsSink(storing, recording, new UsageFactFactory(Clock.systemUTC()),
+				new UsageFactRecorder(outbox, Clock.systemUTC()), (tenant, product, stored, records, key) -> {
+					keys.add(key);
+					if (publishes.getAndIncrement() == 0) {
+						return "ABANDONED";
+					}
+					return "DONE:logs:1-0";
+				});
+
+		assertThat(export(VALID_TOKEN, sink, batch(VALID))).isInstanceOf(IngestionDecision.DestinationUnavailable.class);
+		String originalKey = outbox.item.acceptedEvidenceKey();
+		assertThat(outbox.compareAndSet(outbox.item.id(), UsageOutboxState.PENDING, outbox.item.abandon())).isTrue();
+
+		assertThat(export(VALID_TOKEN, sink, batch(VALID))).isInstanceOf(IngestionDecision.Accepted.class);
+		assertThat(keys).hasSize(2);
+		assertThat(keys.get(1)).isNotEqualTo(originalKey);
+		assertThat(keys.get(1)).contains(":reopen:");
+		assertThat(outbox.item.state()).isEqualTo(UsageOutboxState.ACCEPTED);
+	}
+
+	@Test
+	void failureAfterPublishIsFlaggedSoTheAsReceivedDebitIsKept() {
+		Outbox outbox = new Outbox();
+		outbox.failAccept = true;
+		PublishingLogsSink sink = new PublishingLogsSink(storing, recording, new UsageFactFactory(Clock.systemUTC()),
+				new UsageFactRecorder(outbox, Clock.systemUTC()), (tenant, product, stored, records, key) -> "DONE:logs:1-0");
+
+		assertThatThrownBy(() -> sink.deliver("tenant-1", "product-a", batch(VALID), List.of(Scoped.of(VALID))))
+			.isInstanceOfSatisfying(SinkUnavailableException.class,
+					ex -> assertThat(ex.publishedBeforeFailure()).isTrue());
+	}
+
+	@Test
+	void failureBeforePublishIsNotFlaggedSoTheRefundStillApplies() {
+		PublishingLogsSink.Publisher failing = (tenant, product, batch, records) -> {
+			throw new MessagePublishException("redis down", null);
+		};
+		assertThatThrownBy(() -> new PublishingLogsSink(storing, failing)
+			.deliver("tenant-1", "product-a", batch(VALID), List.of(Scoped.of(VALID))))
+			.isInstanceOfSatisfying(SinkUnavailableException.class,
+					ex -> assertThat(ex.publishedBeforeFailure()).isFalse());
+	}
+
 	private static final class Outbox implements UsageOutboxRepository {
 		private UsageOutboxItem item;
+		private boolean failAccept;
 
 		@Override public UsageOutboxItem insertPending(UsageFact fact, Instant now) {
-			return item = item == null ? UsageOutboxItem.pending(fact, now) : item;
+			if (item == null) {
+				return item = UsageOutboxItem.pending(fact, now);
+			}
+			if (!item.fact().sameImmutableContent(fact)) {
+				throw new IllegalStateException("usage fact id conflicts with immutable content");
+			}
+			if (item.state() == UsageOutboxState.ABANDONED) {
+				return item = UsageOutboxItem.pendingReopened(fact, now);
+			}
+			return item;
 		}
 		@Override public Optional<UsageOutboxItem> findById(String id) { return Optional.ofNullable(item); }
 		@Override public List<UsageOutboxItem> findPendingBefore(Instant deadline) { return List.of(); }
 		@Override public List<UsageOutboxItem> findAcceptedReady(Instant instant) { return List.of(); }
 		@Override public boolean compareAndSet(String id, UsageOutboxState expected, UsageOutboxItem replacement) {
+			if (failAccept && replacement.state() == UsageOutboxState.ACCEPTED) {
+				throw new RuntimeException("outbox unavailable");
+			}
 			if (item != null && item.id().equals(id) && item.state() == expected) {
 				item = replacement;
 				return true;
