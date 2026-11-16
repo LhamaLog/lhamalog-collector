@@ -1,0 +1,54 @@
+// Tails Collector log files written on the host (logging.file.name).
+// Labels stay low-cardinality (service, level). cid/event are structured metadata.
+// Preferred over a Loki appender: no new runtime dependency, principle-VI line preserved.
+
+local.file_match "collector_logs" {
+  path_targets = [{
+    __path__ = "/var/log/lhamalog/*.log",
+    service  = "lhamalog-collector",
+  }]
+}
+
+loki.source.file "collector" {
+  targets    = local.file_match.collector_logs.targets
+  forward_to = [loki.process.principle_vi.receiver]
+}
+
+loki.process "principle_vi" {
+  forward_to = [loki.write.local.receiver]
+
+  stage.multiline {
+    firstline     = "^\\d{4}-\\d{2}-\\d{2}T"
+    max_wait_time = "3s"
+  }
+
+  stage.regex {
+    expression = "(?s)^(?P<ts>\\d{4}-\\d{2}-\\d{2}T\\S+)\\s+(?P<level>\\S+)\\s+\\[(?P<app>[^\\]]+)\\]\\s+\\[cid=(?P<cid>[^\\]]+)\\]\\s+\\[(?P<thread>[^\\]]+)\\]\\s+(?P<logger>\\S+)\\s+-\\s+(?P<message>.*)$"
+  }
+
+  stage.labels {
+    values = {
+      level = "level",
+    }
+  }
+
+  stage.structured_metadata {
+    values = {
+      cid    = "cid",
+      logger = "logger",
+    }
+  }
+
+  stage.timestamp {
+    source = "ts"
+    format = "RFC3339Nano"
+  }
+
+  // No stage.output: the full principle-VI line (date+zone, cid, class.method, event=) is kept in Loki.
+}
+
+loki.write "local" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

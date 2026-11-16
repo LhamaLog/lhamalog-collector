@@ -1,0 +1,13 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: lhamalog-collector
+    metrics_path: /actuator/prometheus
+    static_configs:
+      # Default MANAGEMENT_PORT=9464. If you change the port, edit this target to match.
+      - targets:
+          - host.docker.internal:9464
+        labels:
+          service: lhamalog-collector

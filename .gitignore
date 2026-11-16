@@ -34,3 +34,6 @@ build/
 
 ### Ambiente local (infra/local) ###
 infra/local/.env
+
+### Collector log file (local Alloy tail / LLT-187) ###
+logs/
