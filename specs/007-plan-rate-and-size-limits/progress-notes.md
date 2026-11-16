@@ -79,3 +79,19 @@ Arquivo de checkpoint para retomada. Horários em America/Sao_Paulo.
 - T047/T048: demais logs do Collector no formato `event=` e correlation id por item nos workers.
 - Verify às 08:48 (BRT): Collector **295 testes, 0 falhas, 0 erros, 0 ignorados** (exit 0).
 - Abertos: T049 (Core, fora do escopo desta rodada) e T050 (aguarda o Michel). Nada commitado nesta rodada.
+
+## Checkpoint 16/11/2026 — Revisão de review
+
+- Prompt de remediação Collector (PR #6) / itens (3)–(6) + bookkeeping T050/R01–R06.
+- **R03/T050:** `TelemetryIngestedPublisher` usa cid da requisição; contrato `contracts/stream-correlation-id.md`; nota em spec004 data-model + README messaging; testes HTTP/gRPC/unit.
+- **R04:** gRPC `RetryInfo` via `StatusProto`; HTTP Status details com RetryInfo; remoção do trailer `retry-after`; contratos/runbooks atualizados.
+- **R05:** README + runbooks com janela ~25 min, default exporterhelper `max_elapsed_time=300s`, exemplo YAML otlp/otlphttp + file_storage.
+- **R06:** `otlp-quota-rejection.md` revisado (2026-11-16); Javadoc trailer→RetryInfo; **relato enum Core:** docs/spec ainda citam ATIVA/SUSPENSA/INADIMPLENTE (domínio Core); wire Collector já é `SUSPENDED` / outcome inglês — sem mudança de compatibilidade no Collector.
+- Sem git write; sem `.env`; regra “5 violações → block” intocada.
+- Verify (`mvnw.cmd -B verify`): **304 testes, 0 falhas, 0 erros, 0 ignorados — BUILD SUCCESS**.
+
+## Checkpoint 16/11/2026 14:50 (BRT) — Revisão de review (Core #11)
+
+- R01/R02/R06-Core feitos no worktree do Core (`lhamalog-core-llt183`): reversão de `overageBytes`, excedente atômico com teste de concorrência, enum em inglês com leitura dos valores antigos.
+- Regra dos 5 estouros (bloqueio do rate limit) não foi alterada. Decidido pelo Michel em 16/11/2026 16:36: conta por requisição recusada e fica como está.
+- Nada commitado; commits propostos nos rascunhos de PR (`llt183-pr-drafts`).

@@ -2,13 +2,14 @@
 package br.com.lhamalog.collector.ingestion.otlp.sink;
 
 /**
- * Destino indisponivel ou que nao confirmou o recebimento (T013).
+ * Destination unavailable or that did not confirm receipt (T013).
  *
- * <p>Carrega o {@code Retry-After}, em segundos, que o canal HTTP devolve no 503.
+ * <p>Carries the {@code Retry-After} value, in seconds, returned on HTTP 503 (and aligned with gRPC
+ * {@code RetryInfo} when the refusal path attaches it).
  */
 public class SinkUnavailableException extends RuntimeException {
 
-	/** Valor padrao de {@code Retry-After} quando o destino nao informa outro. */
+	/** Default {@code Retry-After} when the destination does not advertise another value. */
 	public static final long DEFAULT_RETRY_AFTER_SECONDS = 5;
 
 	private final long retryAfterSeconds;

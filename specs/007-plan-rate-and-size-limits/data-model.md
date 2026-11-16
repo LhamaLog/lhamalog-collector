@@ -63,7 +63,7 @@ Quando `overageEnabled=false`: comportamento spec006 (INSUFFICIENT_BALANCE / 409
 
 ## Decisões de ingestão (Collector)
 
-| Outcome interno | HTTP | gRPC | Retry-After |
+| Outcome interno | HTTP | gRPC | Retry-After (HTTP) / RetryInfo (gRPC) |
 |-----------------|------|------|-------------|
 | RateLimited (janela) | 429 | RESOURCE_EXHAUSTED | `retry-after` default **5** |
 | RateLimited (bloqueio) | 429 | RESOURCE_EXHAUSTED | `block-retry-after` default **300** |
@@ -72,6 +72,8 @@ Quando `overageEnabled=false`: comportamento spec006 (INSUFFICIENT_BALANCE / 409
 | Suspended | 403 | PERMISSION_DENIED | — |
 | QuotaUnavailable | 503 | UNAVAILABLE | 300 |
 | QuotaUnavailableExhausted | 500 | INTERNAL | — |
+
+gRPC usa `google.rpc.RetryInfo` em `grpc-status-details-bin` (não trailer `retry-after`).
 
 ## Relacionamentos
 

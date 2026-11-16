@@ -2,6 +2,7 @@
 package br.com.lhamalog.collector.ingestion.otlp.sink;
 
 import br.com.lhamalog.collector.ingestion.otlp.domain.Scoped;
+import br.com.lhamalog.collector.logging.CorrelationId;
 import br.com.lhamalog.collector.messaging.AbstractStreamPublisher;
 import br.com.lhamalog.collector.messaging.MessageEnvelope;
 import br.com.lhamalog.collector.messaging.MessagingProperties;
@@ -21,7 +22,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
-import java.util.UUID;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -29,6 +29,10 @@ import tools.jackson.databind.json.JsonMapper;
  * Publishes one reference message per batch stored in OpenObserve (LLT-182). The idempotency id is the batch
  * id, so a client retry of the same batch publishes the same id. Priority and criticality come only from the
  * severity; the batch takes the highest one.
+ *
+ * <p>{@code metadata.correlationId} is the request correlation id (HTTP {@code X-Correlation-Id} / gRPC
+ * {@code x-correlation-id}, or the UUID generated when absent). Callers must publish on a thread that already
+ * carries that id in the MDC (receivers set it; async work must use {@link CorrelationId#propagate}).
  */
 public abstract class TelemetryIngestedPublisher<T extends MessageLite>
 		extends AbstractStreamPublisher<TelemetryIngestedBody> {
@@ -53,18 +57,19 @@ public abstract class TelemetryIngestedPublisher<T extends MessageLite>
 
 	public List<MessageEnvelope> publishBatch(String tenantId, String productId, StoredBatch batch,
 			List<Scoped<T>> records) {
-		return publish(List.of(message(tenantId, productId, batch, records, UUID.randomUUID().toString())));
+		return publish(List.of(message(tenantId, productId, batch, records, requestCorrelationId())));
 	}
 
 	/**
 	 * Publishes the batch reference with a usage evidence key in one Lua
 	 * operation. The evidence is shared by the main stream and its DLQ; a prior
-	 * DONE value never produces another XADD.
+	 * DONE value never produces another XADD. Main stream and DLQ share the same
+	 * {@code metadata.correlationId}.
 	 */
 	public String publishBatchWithUsageEvidence(String tenantId, String productId, StoredBatch batch,
 			List<Scoped<T>> records, String evidenceKey, Duration evidenceTtl, String route) {
 		OutboundMessage<TelemetryIngestedBody> message = message(tenantId, productId, batch, records,
-				UUID.randomUUID().toString());
+				requestCorrelationId());
 		try {
 			return publishWithUsageEvidence(message, evidenceKey, route, evidenceTtl.toSeconds());
 		}
@@ -78,6 +83,14 @@ public abstract class TelemetryIngestedPublisher<T extends MessageLite>
 				throw dlqFailure;
 			}
 		}
+	}
+
+	/**
+	 * Request correlation id from MDC when valid; otherwise a newly generated UUID (same rules as receivers).
+	 */
+	public static String requestCorrelationId() {
+		String current = CorrelationId.current();
+		return CorrelationId.isValid(current) ? current : CorrelationId.newId();
 	}
 
 	OutboundMessage<TelemetryIngestedBody> message(String tenantId, String productId, StoredBatch batch,

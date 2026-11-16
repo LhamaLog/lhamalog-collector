@@ -9,7 +9,8 @@ Ordem de checagem após autenticação: **taxa → tamanho → reserva/saldo**.
 
 ## Rate limit 429 + Retry-After 5 (`reason=rate_limit`)
 
-**Sintomas:** HTTP `429` / gRPC `RESOURCE_EXHAUSTED` com `Retry-After: 5`; métrica
+**Sintomas:** HTTP `429` / gRPC `RESOURCE_EXHAUSTED` com `Retry-After: 5` (HTTP) /
+`RetryInfo` 5 s (gRPC `grpc-status-details-bin`); métrica
 `lhamalog.ingestion.refused{reason=rate_limit}`; sem chamada de reserva ao Core;
 lote não publicado.
 
@@ -32,7 +33,8 @@ violações `lhamalog:ratelimit:violations:{tenantId}`; bloqueio
 
 ## Bloqueio de taxa 429 + Retry-After 300 (`reason=rate_limit_blocked`)
 
-**Sintomas:** HTTP `429` / gRPC `RESOURCE_EXHAUSTED` com `Retry-After: 300`; métrica
+**Sintomas:** HTTP `429` / gRPC `RESOURCE_EXHAUSTED` com `Retry-After: 300` (HTTP) /
+`RetryInfo` 300 s (gRPC); métrica
 `lhamalog.ingestion.refused{reason=rate_limit_blocked}`. A 5ª violação na janela de
 60 s já responde com 300 s; reqs no bloqueio não incrementam a janela de 1 s.
 
@@ -74,21 +76,21 @@ TOO_LARGE existente.
 **Propriedades:** `lhamalog.otlp.max-batch-size` (5MB),
 `lhamalog.otlp.max-message-size` (64MB).
 
-## Assinatura SUSPENSA → 403 / PERMISSION_DENIED (`reason=subscription_suspended`)
+## Assinatura SUSPENDED → 403 / PERMISSION_DENIED (`reason=subscription_suspended`)
 
 **Sintomas:** HTTP `403` / gRPC `PERMISSION_DENIED`; métrica
 `lhamalog.ingestion.refused{reason=subscription_suspended}`; nada publicado.
 
-**Causa:** `PlanSubscription.status=SUSPENSA` no Core (após taxa/tamanho ok).
+**Causa:** `PlanSubscription.status=SUSPENDED` no Core (documentos antigos com `SUSPENSA` continuam lidos) (após taxa/tamanho ok).
 
 **Ação:** no Core, regularize a assinatura do tenant; não force reenvio no Collector.
 
-**Propriedades:** status da assinatura no Core (default de documentos novos: `ATIVA`).
+**Propriedades:** status da assinatura no Core (default de documentos novos: `ACTIVE`; o Core ainda lê `ATIVA`/`SUSPENSA`/`INADIMPLENTE` de documentos antigos).
 
-## Assinatura INADIMPLENTE (carência 15 dias)
+## Assinatura DELINQUENT (carência 15 dias)
 
 **Sintomas durante a carência:** ingestão permitida (seguindo taxa/tamanho/saldo).
-**Após a carência:** igual a SUSPENSA → 403 / PERMISSION_DENIED.
+**Após a carência:** igual a SUSPENDED → 403 / PERMISSION_DENIED.
 **Sem `delinquentSince`:** ingestão permitida com WARN
 `event=subscription.delinquent.missing_since` (no Core).
 
@@ -102,12 +104,13 @@ como suspensão.
 
 ## Core indisponível / sem plano → 503 + Retry-After 300 (até 5 tentativas)
 
-**Sintomas (tentativas 1..5):** HTTP `503` / gRPC `UNAVAILABLE` com `Retry-After: 300`;
-métrica `lhamalog.ingestion.refused{reason=quota_unavailable}`; log
+**Sintomas (tentativas 1..5):** HTTP `503` / gRPC `UNAVAILABLE` com `Retry-After: 300`
+(HTTP) / `RetryInfo` 300 s (gRPC); métrica
+`lhamalog.ingestion.refused{reason=quota_unavailable}`; log
 `event=quota.core_unavailable.retry`. `NO_PLAN` / sem plano usa o **mesmo** caminho.
 
-**Sintomas (tentativa 6+):** HTTP `500` / gRPC `INTERNAL` **sem** Retry-After; métrica
-`reason=quota_unavailable_exhausted`; log `event=quota.core_unavailable.exhausted`;
+**Sintomas (tentativa 6+):** HTTP `500` / gRPC `INTERNAL` **sem** Retry-After / RetryInfo;
+métrica `reason=quota_unavailable_exhausted`; log `event=quota.core_unavailable.exhausted`;
 lote perdido (não retentável OTLP).
 
 **Causa:** Core fora, timeout, 5xx ou ausência de plano/ciclo; orçamento por lote
@@ -129,6 +132,12 @@ redis-cli -a "$REDIS_PASSWORD" DEL "lhamalog:quota:core-unavailable:<batchKey>"
 3. Com Core de volta, o fluxo processa e o Collector apaga a chave no sucesso.
 4. Redis do contador indisponível → 503 + Retry-After 300 **sem** orçamento + WARN/métrica
    `quota_unavailable_attempt_store_unavailable`.
+5. **Exportador do cliente:** a janela de ~25 min (5×300 s) só vale se o exporter
+   retentar por esse tempo. No OpenTelemetry Collector, `retry_on_failure.max_elapsed_time`
+   default é **300s** ([exporterhelper README](https://github.com/open-telemetry/opentelemetry-collector/blob/main/exporter/exporterhelper/README.md))
+   — configure **30m** (ou mais) e `sending_queue` com `file_storage`. Exemplo completo
+   na seção “Clientes OTLP” do [README](../README.md). SDKs de app (Java etc.) têm retry
+   curto: prefira um agente OTel Collector na frente.
 
 **Propriedades:** `lhamalog.quota.unavailable-retry-after` (300s),
 `unavailable-max-attempts` (5), `unavailable-attempt-ttl` (30m).
@@ -156,7 +165,7 @@ tamanho → reserva.
 | `rate_limit_blocked` | bloqueio de violações (Retry-After 300) |
 | `batch_too_large` | lote > max-batch-size |
 | `insufficient_balance` | saldo insuficiente (Retry-After 120) |
-| `subscription_suspended` | assinatura SUSPENSA / carência INADIMPLENTE expirada |
+| `subscription_suspended` | assinatura SUSPENDED / carência DELINQUENT expirada |
 | `quota_unavailable` | Core/sem plano retentável (503 / 300) |
 | `quota_unavailable_exhausted` | orçamento 5 tentativas esgotado (500) |
 | `rate_limit_store_unavailable` | Redis rate-limit down (fail-open) |

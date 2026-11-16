@@ -40,9 +40,6 @@ class OtlpGrpcSuspendedTest {
 	private static final String GOOD = "good-token";
 	private static final Metadata.Key<String> AUTHORIZATION = Metadata.Key.of("authorization",
 			Metadata.ASCII_STRING_MARSHALLER);
-	private static final Metadata.Key<String> RETRY_AFTER = Metadata.Key.of("retry-after",
-			Metadata.ASCII_STRING_MARSHALLER);
-
 	private OtlpGrpcServer server;
 	private ManagedChannel channel;
 
@@ -64,7 +61,7 @@ class OtlpGrpcSuspendedTest {
 				() -> logs().export(batch(LogRecord.getDefaultInstance())));
 		assertThat(ex.getStatus().getCode()).isEqualTo(Status.Code.PERMISSION_DENIED);
 		assertThat(ex.getStatus().getDescription()).contains("subscription suspended");
-		assertThat(ex.getTrailers() == null ? null : ex.getTrailers().get(RETRY_AFTER)).isNull();
+		GrpcRetryInfo.assertNoRetryInfo(ex);
 		assertThat(delivered).hasValue(0);
 	}
 

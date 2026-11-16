@@ -6,11 +6,13 @@ import br.com.lhamalog.collector.ingestion.otlp.application.ExportTracesService;
 import br.com.lhamalog.collector.ingestion.otlp.application.IngestionObservability;
 import br.com.lhamalog.collector.ingestion.otlp.application.IngestionProtocol;
 import br.com.lhamalog.collector.ingestion.otlp.domain.IngestionDecision;
-import io.grpc.Metadata;
+import com.google.protobuf.Any;
+import com.google.rpc.RetryInfo;
 import io.grpc.Server;
 import io.grpc.ServerInterceptors;
 import io.grpc.Status;
 import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
+import io.grpc.protobuf.StatusProto;
 import io.grpc.stub.StreamObserver;
 import io.opentelemetry.proto.collector.logs.v1.ExportLogsPartialSuccess;
 import io.opentelemetry.proto.collector.logs.v1.ExportLogsServiceRequest;
@@ -36,7 +38,8 @@ import org.springframework.context.SmartLifecycle;
  *
  * <p>Status: OK (with {@code partial_success} when records were rejected), UNAUTHENTICATED,
  * INVALID_ARGUMENT, RESOURCE_EXHAUSTED without {@code RetryInfo} (message above the limit, enforced by
- * Netty), and UNAVAILABLE when the catalog or the destination did not confirm.
+ * Netty), and UNAVAILABLE when the catalog or the destination did not confirm. Throttling / quota
+ * refusals attach {@link RetryInfo} in {@code google.rpc.Status} details ({@code grpc-status-details-bin}).
  */
 public class OtlpGrpcServer implements SmartLifecycle {
 
@@ -141,33 +144,39 @@ public class OtlpGrpcServer implements SmartLifecycle {
 		};
 	}
 
-	private static final Metadata.Key<String> RETRY_AFTER = Metadata.Key.of("retry-after",
-			Metadata.ASCII_STRING_MARSHALLER);
-
 	private static <A> void reply(IngestionDecision decision, StreamObserver<A> observer, A ok,
 			Function<IngestionDecision.PartiallyAccepted, A> partial) {
 		Status failure = failureStatus(decision);
 		if (failure != null) {
-			String retryAfter = retryAfterSeconds(decision);
-			if (retryAfter != null) {
-				Metadata trailers = new Metadata();
-				trailers.put(RETRY_AFTER, retryAfter);
-				observer.onError(failure.asRuntimeException(trailers));
-			}
-			else {
-				observer.onError(failure.asRuntimeException());
-			}
+			observer.onError(asFailure(failure, retryAfterSeconds(decision)));
 			return;
 		}
 		observer.onNext(decision instanceof IngestionDecision.PartiallyAccepted p ? partial.apply(p) : ok);
 		observer.onCompleted();
 	}
 
-	private static String retryAfterSeconds(IngestionDecision decision) {
+	/**
+	 * Builds a status runtime exception with optional {@link RetryInfo} in
+	 * {@code grpc-status-details-bin} (no custom {@code retry-after} trailer).
+	 */
+	static RuntimeException asFailure(Status status, Long retryAfterSeconds) {
+		com.google.rpc.Status.Builder rpc = com.google.rpc.Status.newBuilder()
+				.setCode(status.getCode().value())
+				.setMessage(status.getDescription() == null ? "" : status.getDescription());
+		if (retryAfterSeconds != null) {
+			rpc.addDetails(Any.pack(RetryInfo.newBuilder()
+					.setRetryDelay(com.google.protobuf.Duration.newBuilder().setSeconds(retryAfterSeconds).build())
+					.build()));
+		}
+		return StatusProto.toStatusRuntimeException(rpc.build());
+	}
+
+	/** Seconds for {@link RetryInfo} when the decision previously used the {@code retry-after} trailer. */
+	private static Long retryAfterSeconds(IngestionDecision decision) {
 		return switch (decision) {
-			case IngestionDecision.QuotaExceeded q -> "120";
-			case IngestionDecision.QuotaUnavailable q -> Long.toString(q.retryAfterSeconds());
-			case IngestionDecision.RateLimited r -> Long.toString(r.retryAfterSeconds());
+			case IngestionDecision.QuotaExceeded q -> 120L;
+			case IngestionDecision.QuotaUnavailable q -> q.retryAfterSeconds();
+			case IngestionDecision.RateLimited r -> r.retryAfterSeconds();
 			default -> null;
 		};
 	}
