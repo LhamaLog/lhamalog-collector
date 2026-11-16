@@ -217,6 +217,60 @@ Após autenticação, a ordem é **taxa → tamanho → reserva**. Propriedades 
 
 Carência de assinatura INADIMPLENTE (`lhamalog.subscription.delinquency-grace`, default 15d) fica no **Core**. Runbook: [docs/rate-and-size-limits-runbook.md](docs/rate-and-size-limits-runbook.md).
 
+### Clientes OTLP e janela “Core indisponível”
+
+Com Core fora, o Collector responde **503** / gRPC **UNAVAILABLE** com Retry-After / RetryInfo **300 s** até **5** tentativas do mesmo lote (~25 min); na 6ª, **500** / **INTERNAL** e o lote é perdido. Isso só funciona se o exportador continuar retentando por esse tempo.
+
+Exporters `otlp` / `otlphttp` do **OpenTelemetry Collector** usam `retry_on_failure` do [exporterhelper](https://github.com/open-telemetry/opentelemetry-collector/blob/main/exporter/exporterhelper/README.md): o default de `max_elapsed_time` é **300s (5 min)** — insuficiente para as 5×300 s. Suba para pelo menos **30m** e use `sending_queue` persistente (`file_storage`). O Collector LhamaLog honra `Retry-After` (HTTP) e `RetryInfo` (gRPC) como atraso de throttle. SDKs de aplicação (ex.: Java) têm políticas de retry curtas: envie via agente OTel Collector.
+
+Exemplo (otlphttp + otlp, token via env, fila persistente):
+
+```yaml
+extensions:
+  file_storage/otc:
+    directory: /var/lib/otelcol/file_storage
+
+exporters:
+  otlphttp/lhamalog:
+    endpoint: https://collector.example:4318
+    headers:
+      Authorization: "Bearer ${env:LHAMALOG_OTLP_TOKEN}"
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 30s
+      max_elapsed_time: 30m
+    sending_queue:
+      enabled: true
+      storage: file_storage/otc
+  otlp/lhamalog:
+    endpoint: collector.example:4317
+    tls:
+      insecure: false
+    headers:
+      Authorization: "Bearer ${env:LHAMALOG_OTLP_TOKEN}"
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 30s
+      max_elapsed_time: 30m
+    sending_queue:
+      enabled: true
+      storage: file_storage/otc
+
+service:
+  extensions: [file_storage/otc]
+  pipelines:
+    logs:
+      receivers: [otlp]
+      exporters: [otlphttp/lhamalog]
+    traces:
+      receivers: [otlp]
+      exporters: [otlp/lhamalog]
+```
+
+Detalhes operacionais: [docs/rate-and-size-limits-runbook.md](docs/rate-and-size-limits-runbook.md), [docs/quota-reservation-runbook.md](docs/quota-reservation-runbook.md).
+
 ## Perfis de execução (ADR_151)
 
 | Perfil | Quando usar | De onde vêm as configurações |

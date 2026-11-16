@@ -9,7 +9,8 @@ Ordem de checagem após autenticação: **taxa → tamanho → reserva/saldo**.
 
 ## Rate limit 429 + Retry-After 5 (`reason=rate_limit`)
 
-**Sintomas:** HTTP `429` / gRPC `RESOURCE_EXHAUSTED` com `Retry-After: 5`; métrica
+**Sintomas:** HTTP `429` / gRPC `RESOURCE_EXHAUSTED` com `Retry-After: 5` (HTTP) /
+`RetryInfo` 5 s (gRPC `grpc-status-details-bin`); métrica
 `lhamalog.ingestion.refused{reason=rate_limit}`; sem chamada de reserva ao Core;
 lote não publicado.
 
@@ -32,7 +33,8 @@ violações `lhamalog:ratelimit:violations:{tenantId}`; bloqueio
 
 ## Bloqueio de taxa 429 + Retry-After 300 (`reason=rate_limit_blocked`)
 
-**Sintomas:** HTTP `429` / gRPC `RESOURCE_EXHAUSTED` com `Retry-After: 300`; métrica
+**Sintomas:** HTTP `429` / gRPC `RESOURCE_EXHAUSTED` com `Retry-After: 300` (HTTP) /
+`RetryInfo` 300 s (gRPC); métrica
 `lhamalog.ingestion.refused{reason=rate_limit_blocked}`. A 5ª violação na janela de
 60 s já responde com 300 s; reqs no bloqueio não incrementam a janela de 1 s.
 
@@ -102,12 +104,13 @@ como suspensão.
 
 ## Core indisponível / sem plano → 503 + Retry-After 300 (até 5 tentativas)
 
-**Sintomas (tentativas 1..5):** HTTP `503` / gRPC `UNAVAILABLE` com `Retry-After: 300`;
-métrica `lhamalog.ingestion.refused{reason=quota_unavailable}`; log
+**Sintomas (tentativas 1..5):** HTTP `503` / gRPC `UNAVAILABLE` com `Retry-After: 300`
+(HTTP) / `RetryInfo` 300 s (gRPC); métrica
+`lhamalog.ingestion.refused{reason=quota_unavailable}`; log
 `event=quota.core_unavailable.retry`. `NO_PLAN` / sem plano usa o **mesmo** caminho.
 
-**Sintomas (tentativa 6+):** HTTP `500` / gRPC `INTERNAL` **sem** Retry-After; métrica
-`reason=quota_unavailable_exhausted`; log `event=quota.core_unavailable.exhausted`;
+**Sintomas (tentativa 6+):** HTTP `500` / gRPC `INTERNAL` **sem** Retry-After / RetryInfo;
+métrica `reason=quota_unavailable_exhausted`; log `event=quota.core_unavailable.exhausted`;
 lote perdido (não retentável OTLP).
 
 **Causa:** Core fora, timeout, 5xx ou ausência de plano/ciclo; orçamento por lote
@@ -129,6 +132,12 @@ redis-cli -a "$REDIS_PASSWORD" DEL "lhamalog:quota:core-unavailable:<batchKey>"
 3. Com Core de volta, o fluxo processa e o Collector apaga a chave no sucesso.
 4. Redis do contador indisponível → 503 + Retry-After 300 **sem** orçamento + WARN/métrica
    `quota_unavailable_attempt_store_unavailable`.
+5. **Exportador do cliente:** a janela de ~25 min (5×300 s) só vale se o exporter
+   retentar por esse tempo. No OpenTelemetry Collector, `retry_on_failure.max_elapsed_time`
+   default é **300s** ([exporterhelper README](https://github.com/open-telemetry/opentelemetry-collector/blob/main/exporter/exporterhelper/README.md))
+   — configure **30m** (ou mais) e `sending_queue` com `file_storage`. Exemplo completo
+   na seção “Clientes OTLP” do [README](../README.md). SDKs de app (Java etc.) têm retry
+   curto: prefira um agente OTel Collector na frente.
 
 **Propriedades:** `lhamalog.quota.unavailable-retry-after` (300s),
 `unavailable-max-attempts` (5), `unavailable-attempt-ttl` (30m).
