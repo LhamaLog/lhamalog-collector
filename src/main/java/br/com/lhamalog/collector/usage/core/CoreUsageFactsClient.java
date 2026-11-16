@@ -45,14 +45,14 @@ public final class CoreUsageFactsClient implements UsageFactsClient {
 			.header("X-LhamaLog-Service-Token", authentication.serviceToken())
 			.POST(HttpRequest.BodyPublishers.ofString(toJson(fact)))
 			.build();
-		log.info("Sending usage fact to {} headerNames={} authorizationPresent={} contentType={} tokenLength={} tokenSha256={}",
+		log.debug("Sending usage fact to {} headerNames={} authorizationPresent={} contentType={} tokenLength={} tokenSha256={}",
 				endpoint, request.headers().map().keySet(),
 				request.headers().firstValue("Authorization").isPresent(),
 				request.headers().firstValue("Content-Type").orElse("?"),
 				authentication.serviceToken().length(),
 				CoreAuthenticationProvider.sha256Hex(authentication.serviceToken()));
 		int status = http.send(request, HttpResponse.BodyHandlers.discarding()).statusCode();
-		log.info("Core usage-fact response {}", status);
+		log.debug("Core usage-fact response {}", status);
 		return status;
 	}
 

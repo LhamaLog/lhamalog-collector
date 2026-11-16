@@ -58,7 +58,7 @@ public final class UsageOutboxWorker {
 	public void runOnce() {
 		Instant now = clock.instant();
 		var ready = outbox.findAcceptedReady(now);
-		log.info("Usage outbox worker tick ready={}", ready.size());
+		log.debug("Usage outbox worker tick ready={}", ready.size());
 		for (UsageOutboxItem candidate : ready) {
 			deliver(candidate, now);
 		}
