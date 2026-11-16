@@ -12,13 +12,20 @@ import java.time.Instant;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
  * Ensures OpenObserve stream {@code data_retention} matches the plan (LLT-185). Runs off the request path;
  * failures never refuse a batch already written.
+ *
+ * <p>Two worker threads with a bounded queue ({@value #QUEUE_CAPACITY} pending applies). When the queue is
+ * full the apply is dropped (metric {@code outcome=dropped}); nothing is cached, so the next batch of that
+ * stream schedules it again. {@link #shutdown()} is the bean destroy method.
  */
 public final class StreamRetentionService {
 
@@ -29,6 +36,9 @@ public final class StreamRetentionService {
 	private static final Duration CACHE_TTL = Duration.ofHours(1);
 	private static final long CACHE_MAX = 10_000;
 	private static final Duration FAILURE_BACKOFF = Duration.ofSeconds(60);
+	static final int POOL_SIZE = 2;
+	static final int QUEUE_CAPACITY = 1_000;
+	private static final Duration SHUTDOWN_WAIT = Duration.ofSeconds(5);
 
 	private final OpenObserveClient client;
 	private final Clock clock;
@@ -38,11 +48,12 @@ public final class StreamRetentionService {
 	private final MeterRegistry meters;
 
 	public StreamRetentionService(OpenObserveClient client, Clock clock, MeterRegistry meters) {
-		this(client, clock, meters, Executors.newFixedThreadPool(2, runnable -> {
-			Thread thread = new Thread(runnable, "oo-stream-retention");
-			thread.setDaemon(true);
-			return thread;
-		}));
+		this(client, clock, meters, new ThreadPoolExecutor(POOL_SIZE, POOL_SIZE, 0L, TimeUnit.MILLISECONDS,
+				new LinkedBlockingQueue<>(QUEUE_CAPACITY), runnable -> {
+					Thread thread = new Thread(runnable, "oo-stream-retention");
+					thread.setDaemon(true);
+					return thread;
+				}, new ThreadPoolExecutor.AbortPolicy()));
 	}
 
 	StreamRetentionService(OpenObserveClient client, Clock clock, MeterRegistry meters, ExecutorService executor) {
@@ -79,10 +90,32 @@ public final class StreamRetentionService {
 		if (blockedUntil != null && clock.instant().isBefore(blockedUntil)) {
 			return;
 		}
-		executor.execute(() -> CorrelationId.propagate(() -> {
-			apply(key, retentionDays);
-			return null;
-		}).get());
+		try {
+			executor.execute(() -> CorrelationId.propagate(() -> {
+				apply(key, retentionDays);
+				return null;
+			}).get());
+		}
+		catch (RejectedExecutionException ex) {
+			count("dropped", type);
+			log.warn(
+					"event=openobserve.stream_retention.apply_dropped | Retention apply queue full or shut down; will retry on next batch | stream={} type={} retentionDays={}",
+					stream, type, retentionDays);
+		}
+	}
+
+	/** Stops accepting applies and waits briefly for in-flight ones (bean destroy method). */
+	public void shutdown() {
+		executor.shutdown();
+		try {
+			if (!executor.awaitTermination(SHUTDOWN_WAIT.toMillis(), TimeUnit.MILLISECONDS)) {
+				executor.shutdownNow();
+			}
+		}
+		catch (InterruptedException ex) {
+			Thread.currentThread().interrupt();
+			executor.shutdownNow();
+		}
 	}
 
 	/** Synchronous apply for unit tests. */

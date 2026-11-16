@@ -114,6 +114,29 @@ class StreamRetentionServiceTest {
 		assertThat(lastBody.get()).contains("\"data_retention\":15");
 	}
 
+	@Test
+	void fullOrStoppedQueueDropsApplyWithoutThrowingAndRetriesLater() {
+		RetentionCorrelation.set(7);
+		java.util.concurrent.ThreadPoolExecutor stopped = new java.util.concurrent.ThreadPoolExecutor(1, 1, 0L,
+				TimeUnit.MILLISECONDS, new java.util.concurrent.LinkedBlockingQueue<>(1));
+		stopped.shutdown();
+		StreamRetentionService dropping = new StreamRetentionService(client, clock, meters, stopped);
+		dropping.ensureAfterIngestAsync("logs", "logs_acme");
+		assertThat(calls).hasValue(0);
+		assertThat(meters.counter(StreamRetentionService.METRIC, "outcome", "dropped", "type", "logs").count())
+				.isEqualTo(1.0);
+
+		syncService().ensureAfterIngestAsync("logs", "logs_acme");
+		assertThat(calls).hasValue(1);
+	}
+
+	@Test
+	void shutdownStopsTheExecutor() {
+		java.util.concurrent.ExecutorService executor = java.util.concurrent.Executors.newSingleThreadExecutor();
+		new StreamRetentionService(client, clock, meters, executor).shutdown();
+		assertThat(executor.isShutdown()).isTrue();
+	}
+
 	private StreamRetentionService syncService() {
 		return new StreamRetentionService(client, clock, meters, new AbstractExecutorService() {
 			@Override

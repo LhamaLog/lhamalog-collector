@@ -238,7 +238,7 @@ public class OtlpReceiverConfiguration {
 		return new OpenObserveClient(http, oo.url(), oo.organization(), oo.username(), oo.password());
 	}
 
-	@Bean
+	@Bean(destroyMethod = "shutdown")
 	StreamRetentionService streamRetentionService(OpenObserveClient client,
 			io.micrometer.core.instrument.MeterRegistry meters) {
 		return new StreamRetentionService(client, Clock.systemUTC(), meters);

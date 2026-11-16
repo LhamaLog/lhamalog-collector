@@ -10,9 +10,13 @@ import java.net.http.HttpResponse;
 import java.time.Duration;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.json.JsonMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /** Synchronous Core reservation adapter. All transport ambiguity is deliberately fail-closed. */
 public final class HttpQuotaReservationClient implements QuotaReservationClient {
+
+	private static final Logger log = LoggerFactory.getLogger(HttpQuotaReservationClient.class);
 	private final HttpClient http;
 	private final URI endpoint;
 	private final CoreAuthenticationProvider authentication;
@@ -106,7 +110,9 @@ public final class HttpQuotaReservationClient implements QuotaReservationClient 
 	/**
 	 * Parses {@code outcome} and optional {@code retentionDays} from Core JSON. Extra fields such as
 	 * {@code overageBytes} are ignored; only known {@link ReservationOutcome} names are accepted.
-	 * Absent/null/{@code <=0} retentionDays means unknown (LLT-185).
+	 * Absent/null/{@code <=0} retentionDays means unknown (LLT-185). Non-integral (e.g. {@code 7.5}) or
+	 * out-of-range values are rejected as unknown with a WARN, never rounded: rounding up would keep data longer
+	 * than the plan and rounding down could delete data the tenant paid for.
 	 */
 	private ReservationResult parseResult(String body) {
 		try {
@@ -117,10 +123,17 @@ public final class HttpQuotaReservationClient implements QuotaReservationClient 
 			}
 			Integer retentionDays = null;
 			var retentionNode = tree.path("retentionDays");
-			if (!retentionNode.isMissingNode() && !retentionNode.isNull() && retentionNode.isNumber()) {
-				int value = retentionNode.asInt();
-				if (value > 0) {
-					retentionDays = value;
+			if (!retentionNode.isMissingNode() && !retentionNode.isNull()) {
+				if (retentionNode.isIntegralNumber() && retentionNode.canConvertToInt()) {
+					int value = retentionNode.asInt();
+					if (value > 0) {
+						retentionDays = value;
+					}
+				}
+				else {
+					log.warn(
+							"event=quota.reservation.retention_invalid | Core retentionDays is not a positive integer; treated as unknown | retentionDays={}",
+							retentionNode.toString());
 				}
 			}
 			return new ReservationResult(ReservationOutcome.valueOf(outcome), retentionDays);

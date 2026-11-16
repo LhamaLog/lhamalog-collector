@@ -109,6 +109,15 @@ class HttpQuotaReservationClientTest {
 	}
 
 	@Test
+	void reserveRejectsNonIntegralOrOutOfRangeRetentionDaysAsUnknown() {
+		status.set(201);
+		for (String value : new String[] { "7.5", "7.0", "\"30\"", "10000000000", "-7" }) {
+			responseBody.set("{\"outcome\":\"AUTHORIZED\",\"retentionDays\":" + value + "}");
+			assertThat(client(Duration.ofSeconds(1)).reserve(request()).knownRetentionDays()).as(value).isNull();
+		}
+	}
+
+	@Test
 	void reserveFailsClosedForServerErrorAndTimeout() {
 		status.set(503);
 		assertThatThrownBy(() -> client(Duration.ofSeconds(1)).reserve(request()))
