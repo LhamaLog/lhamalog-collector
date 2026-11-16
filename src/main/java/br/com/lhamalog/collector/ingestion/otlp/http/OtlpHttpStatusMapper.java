@@ -42,6 +42,9 @@ public final class OtlpHttpStatusMapper {
 			case IngestionDecision.CatalogUnavailable c -> unavailable(SinkUnavailableException.DEFAULT_RETRY_AFTER_SECONDS,
 					"token catalog unavailable, retry later");
 			case IngestionDecision.DestinationUnavailable d -> unavailable(d.retryAfterSeconds(), "destination unavailable, retry later");
+			case IngestionDecision.QuotaExceeded q -> new HttpOutcome(429, Map.of("Retry-After", "120"),
+					status(Code.RESOURCE_EXHAUSTED, "ingestion quota exhausted, retry later"));
+			case IngestionDecision.QuotaUnavailable q -> unavailable(120, "ingestion quota unavailable, retry later");
 			case IngestionDecision.InvalidPayload p -> switch (p.reason()) {
 				case TOO_LARGE -> new HttpOutcome(413, Map.of(), status(Code.RESOURCE_EXHAUSTED, p.message()));
 				case UNSUPPORTED_ENCODING -> new HttpOutcome(415, Map.of(), status(Code.INVALID_ARGUMENT, p.message()));

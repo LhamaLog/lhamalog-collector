@@ -8,6 +8,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataAccessException;
@@ -31,7 +32,7 @@ public abstract class AbstractStreamPublisher<T> {
 
 	private static final Logger log = LoggerFactory.getLogger(AbstractStreamPublisher.class);
 
-	private final StringRedisTemplate redis;
+	protected final StringRedisTemplate redis;
 
 	private final JsonMapper json;
 
@@ -41,13 +42,13 @@ public abstract class AbstractStreamPublisher<T> {
 
 	private final PublishSleeper sleeper;
 
-	private final String stream;
+	protected final String stream;
 
-	private final long maxLen;
+	protected final long maxLen;
 
-	private final String dlqStream;
+	protected final String dlqStream;
 
-	private final long dlqMaxLen;
+	protected final long dlqMaxLen;
 
 	protected AbstractStreamPublisher(StringRedisTemplate redis, JsonMapper json, MessagingProperties properties,
 			Clock clock) {
@@ -153,6 +154,53 @@ public abstract class AbstractStreamPublisher<T> {
 		}
 	}
 
+	/**
+	 * Appends one message and records its immutable acceptance evidence in the
+	 * same Redis Lua invocation. This is intentionally separate from
+	 * {@link #publish(List)}, which retains the legacy retry/DLQ behaviour for
+	 * messages that do not participate in the usage outbox protocol.
+	 *
+	 * @return {@code DONE:*}, {@code CLAIMED:*}, or {@code ABANDONED}
+	 */
+	protected final String publishWithUsageEvidence(OutboundMessage<T> message, String evidenceKey, String route,
+			long evidenceTtlSeconds) {
+		return publishWithUsageEvidence(message, evidenceKey, route, evidenceTtlSeconds, stream, maxLen);
+	}
+
+	protected final String publishWithUsageEvidence(OutboundMessage<T> message, String evidenceKey, String route,
+			long evidenceTtlSeconds, String targetStream, long targetMaxLen) {
+		if (evidenceTtlSeconds <= 0) {
+			throw new IllegalArgumentException("evidenceTtlSeconds must be positive");
+		}
+		MessageEnvelope envelope = new MessageEnvelope(message.idempotencyId(), event(), origin(), schemaVersion(),
+				DateTimeFormatter.ISO_INSTANT.format(clock.instant()), message.metadata(), toJson(message.body()));
+		Map<String, String> fields = fields(envelope);
+		StringBuilder script = new StringBuilder("""
+				local current = redis.call('GET', KEYS[2])
+				if current then
+				  return current
+				end
+				redis.call('SET', KEYS[2], 'CLAIMED:' .. ARGV[1], 'EX', ARGV[2])
+				local id = redis.call('XADD', KEYS[1], 'MAXLEN', '~', ARGV[3], '*'
+				""");
+		List<String> arguments = new ArrayList<>();
+		arguments.add(java.util.UUID.randomUUID().toString());
+		arguments.add(Long.toString(evidenceTtlSeconds));
+		arguments.add(Long.toString(targetMaxLen));
+		fields.forEach((field, value) -> {
+			script.append(", ARGV[").append(arguments.size() + 1).append("], ARGV[")
+				.append(arguments.size() + 2).append("]");
+			arguments.add(field);
+			arguments.add(value);
+		});
+		script.append(")\nredis.call('SET', KEYS[2], 'DONE:' .. ARGV[")
+			.append(arguments.size() + 1).append("] .. ':' .. id, 'EX', ARGV[2])\n")
+			.append("return redis.call('GET', KEYS[2])");
+		arguments.add(route);
+		DefaultRedisScript<String> lua = new DefaultRedisScript<>(script.toString(), String.class);
+		return redis.execute(lua, List.of(targetStream, evidenceKey), arguments.toArray(String[]::new));
+	}
+
 	private void writeDlq(List<MessageEnvelope> envelopes, int attempts, MessagePublishException lastFailure) {
 		String failedAt = DateTimeFormatter.ISO_INSTANT.format(clock.instant());
 		String lastError = formatError(lastFailure);
@@ -195,7 +243,7 @@ public abstract class AbstractStreamPublisher<T> {
 		}
 	}
 
-	private Map<String, String> fields(MessageEnvelope envelope) {
+	protected Map<String, String> fields(MessageEnvelope envelope) {
 		Map<String, String> fields = new LinkedHashMap<>();
 		fields.put("idempotencyId", envelope.idempotencyId());
 		fields.put("event", envelope.event());
@@ -225,7 +273,7 @@ public abstract class AbstractStreamPublisher<T> {
 		return name + ": " + sanitized;
 	}
 
-	private String toJson(Object value) {
+	protected String toJson(Object value) {
 		try {
 			return json.writeValueAsString(value);
 		}

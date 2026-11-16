@@ -293,3 +293,31 @@ Sem GitHub Actions: rode `make verify` localmente antes de cada push.
 ## Padrão de commit
 
 Mensagens no formato `CHAVE-JIRA: descricao` (ex.: `LLT-82: inicializacao do modulo: Collector`), conforme a ADR_148. Detalhes em [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Medição de volume (LLT-186)
+
+Quando `lhamalog.usage.enabled=true`, o Collector mede os lotes aceitos e envia fatos ao
+Core (`POST /internal/usage-facts`). A explicação com exemplos está em
+[docs/usage-measurement.md](docs/usage-measurement.md). O runbook técnico para trocar o
+token está em [specs/005-tenant-product-volume/token-rotation-runbook.md](specs/005-tenant-product-volume/token-rotation-runbook.md).
+
+Propriedades (`lhamalog.usage.*`):
+
+| Propriedade | Padrão | Função |
+|---|---|---|
+| `enabled` | `false` | Liga a medição, a outbox e o envio ao Core |
+| `core.url` | `http://localhost:8081` | Base URL do Core |
+| `lease` | `30s` | Duração do lease do trabalhador |
+| `worker-interval` | `10s` | Intervalo do trabalhador e do reconciliador |
+| `grace` | `2m` | Precisa ser maior que `lease`; evita reconciliar um pedido ainda vivo |
+| `deduplication-ttl` | `7d` | Janela de evidência Redis / alinhada à RF-012 |
+| `backoff-initial` | `250ms` | Espera inicial de retry (`429`/`5xx`/rede) |
+| `backoff-ceiling` | `30s` | Teto do backoff |
+
+Variáveis relacionadas: `LHAMALOG_USAGE_ENABLED`, `LHAMALOG_USAGE_CORE_URL`,
+`LHAMALOG_USAGE_WORKER_INTERVAL`, `LHAMALOG_USAGE_BACKOFF_INITIAL`,
+`LHAMALOG_COLLECTOR_CORE_TOKEN`.
+
+`LHAMALOG_COLLECTOR_CORE_TOKEN` é **obrigatória** quando a medição está ligada: o boot
+falha se ela estiver ausente. O Core precisa do mesmo valor em `LHAMALOG_CORE_USAGE_TOKEN`.
+A API interna não aceita `Authorization`/Clerk.

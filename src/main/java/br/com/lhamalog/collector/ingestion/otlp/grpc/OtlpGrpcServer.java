@@ -4,6 +4,7 @@ package br.com.lhamalog.collector.ingestion.otlp.grpc;
 import br.com.lhamalog.collector.ingestion.otlp.application.ExportLogsService;
 import br.com.lhamalog.collector.ingestion.otlp.application.ExportTracesService;
 import br.com.lhamalog.collector.ingestion.otlp.domain.IngestionDecision;
+import io.grpc.Metadata;
 import io.grpc.Server;
 import io.grpc.ServerInterceptors;
 import io.grpc.Status;
@@ -112,6 +113,8 @@ public class OtlpGrpcServer implements SmartLifecycle {
 			case IngestionDecision.Unauthorized u -> Status.UNAUTHENTICATED.withDescription("missing or invalid bearer token");
 			case IngestionDecision.CatalogUnavailable c -> Status.UNAVAILABLE.withDescription("token catalog unavailable, retry later");
 			case IngestionDecision.DestinationUnavailable d -> Status.UNAVAILABLE.withDescription("destination unavailable, retry later");
+			case IngestionDecision.QuotaExceeded q -> Status.RESOURCE_EXHAUSTED.withDescription("ingestion quota exhausted, retry later");
+			case IngestionDecision.QuotaUnavailable q -> Status.UNAVAILABLE.withDescription("ingestion quota unavailable, retry later");
 			case IngestionDecision.InvalidPayload p -> p.reason() == IngestionDecision.Reason.TOO_LARGE
 					? Status.RESOURCE_EXHAUSTED.withDescription(p.message()) : Status.INVALID_ARGUMENT.withDescription(p.message());
 			case IngestionDecision.EmptySuccess e -> null;
@@ -120,11 +123,22 @@ public class OtlpGrpcServer implements SmartLifecycle {
 		};
 	}
 
+	private static final Metadata.Key<String> RETRY_AFTER = Metadata.Key.of("retry-after",
+			Metadata.ASCII_STRING_MARSHALLER);
+
 	private static <A> void reply(IngestionDecision decision, StreamObserver<A> observer, A ok,
 			Function<IngestionDecision.PartiallyAccepted, A> partial) {
 		Status failure = failureStatus(decision);
 		if (failure != null) {
-			observer.onError(failure.asRuntimeException());
+			if (decision instanceof IngestionDecision.QuotaExceeded
+					|| decision instanceof IngestionDecision.QuotaUnavailable) {
+				Metadata trailers = new Metadata();
+				trailers.put(RETRY_AFTER, "120");
+				observer.onError(failure.asRuntimeException(trailers));
+			}
+			else {
+				observer.onError(failure.asRuntimeException());
+			}
 			return;
 		}
 		observer.onNext(decision instanceof IngestionDecision.PartiallyAccepted p ? partial.apply(p) : ok);

@@ -2,6 +2,7 @@
 package br.com.lhamalog.collector.ingestion.otlp.sink;
 
 import br.com.lhamalog.collector.ingestion.otlp.domain.Scoped;
+import io.opentelemetry.proto.collector.logs.v1.ExportLogsServiceRequest;
 import io.opentelemetry.proto.logs.v1.LogRecord;
 import java.util.List;
 
@@ -21,5 +22,15 @@ public interface LogsSink {
 	 * @throws SinkRejectedException se o destino recusar registros como dado invalido
 	 */
 	void deliver(String tenantId, String productId, List<Scoped<LogRecord>> acceptedRecords);
+
+	/**
+	 * Receives the decoded request so destinations that account for usage can
+	 * rebuild the canonical accepted envelope. Existing destinations only need
+	 * the accepted records and retain the original contract.
+	 */
+	default void deliver(String tenantId, String productId, ExportLogsServiceRequest request,
+			List<Scoped<LogRecord>> acceptedRecords) {
+		deliver(tenantId, productId, acceptedRecords);
+	}
 
 }

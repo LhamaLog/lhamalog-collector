@@ -3,6 +3,11 @@ package br.com.lhamalog.collector.ingestion.otlp.sink;
 
 import br.com.lhamalog.collector.ingestion.otlp.domain.Scoped;
 import br.com.lhamalog.collector.messaging.MessagePublishException;
+import br.com.lhamalog.collector.usage.domain.UsageFact;
+import br.com.lhamalog.collector.usage.domain.UsageFactFactory;
+import br.com.lhamalog.collector.usage.outbox.UsageFactRecorder;
+import br.com.lhamalog.collector.usage.outbox.UsageOutboxItem;
+import io.opentelemetry.proto.collector.trace.v1.ExportTraceServiceRequest;
 import io.opentelemetry.proto.trace.v1.Span;
 import java.util.List;
 
@@ -29,13 +34,45 @@ public class PublishingTracesSink implements TracesSink {
 
 	}
 
+	/** Usage-aware publication; its result is the Redis evidence, never stream inspection. */
+	@FunctionalInterface
+	public interface UsagePublisher {
+
+		String publish(String tenantId, String productId, StoredBatch batch, List<Scoped<Span>> records,
+				String evidenceKey);
+
+	}
+
 	private final BatchStore<Span> store;
 
 	private final Publisher publisher;
 
+	private final UsageFactFactory usageFacts;
+
+	private final UsageFactRecorder usageRecorder;
+
+	private final UsagePublisher usagePublisher;
+
 	public PublishingTracesSink(BatchStore<Span> store, Publisher publisher) {
+		this(store, publisher, null, null, null);
+	}
+
+	public PublishingTracesSink(BatchStore<Span> store, Publisher publisher, UsageFactFactory usageFacts,
+			UsageFactRecorder usageRecorder) {
+		this(store, publisher, usageFacts, usageRecorder, null);
+	}
+
+	public PublishingTracesSink(BatchStore<Span> store, Publisher publisher, UsageFactFactory usageFacts,
+			UsageFactRecorder usageRecorder, UsagePublisher usagePublisher) {
 		this.store = store;
 		this.publisher = publisher;
+		this.usageFacts = usageFacts;
+		this.usageRecorder = usageRecorder;
+		this.usagePublisher = usagePublisher != null ? usagePublisher
+				: (tenantId, productId, batch, records, evidenceKey) -> {
+					publisher.publish(tenantId, productId, batch, records);
+					return "DONE:disabled";
+				};
 	}
 
 	public static PublishingTracesSink of(BatchStore<Span> store, TraceIngestedPublisher publisher) {
@@ -44,15 +81,47 @@ public class PublishingTracesSink implements TracesSink {
 
 	@Override
 	public void deliver(String tenantId, String productId, List<Scoped<Span>> acceptedSpans) {
+		deliver(tenantId, productId, null, acceptedSpans);
+	}
+
+	@Override
+	public void deliver(String tenantId, String productId, ExportTraceServiceRequest request,
+			List<Scoped<Span>> acceptedSpans) {
 		StoredBatch batch = store.store(tenantId, productId, acceptedSpans);
 		if (acceptedSpans.isEmpty()) {
 			return;
 		}
+		UsageOutboxItem candidate = null;
+		boolean published = false;
 		try {
-			publisher.publish(tenantId, productId, batch, acceptedSpans);
+			if (request != null && usageFacts != null && usageRecorder != null) {
+				UsageFact fact = usageFacts.traces(tenantId, productId, request, acceptedSpans, batch);
+				candidate = usageRecorder.recordPending(fact);
+			}
+			if (candidate != null) {
+				PublishingLogsSink.confirmUsageEvidence(usagePublisher.publish(tenantId, productId, batch,
+						acceptedSpans, candidate.acceptedEvidenceKey()), "traces");
+				published = true;
+			}
+			else {
+				publisher.publish(tenantId, productId, batch, acceptedSpans);
+				published = true;
+			}
+			if (candidate != null && candidate.state() == br.com.lhamalog.collector.usage.outbox.UsageOutboxState.PENDING) {
+				usageRecorder.accept(candidate);
+			}
 		}
-		catch (MessagePublishException ex) {
-			throw new SinkUnavailableException("Message queue did not confirm the traces reference", ex);
+		catch (SinkUnavailableException ex) {
+			throw ex;
+		}
+		catch (RuntimeException ex) {
+			if (published) {
+				throw SinkUnavailableException.afterPublish("traces were published but the usage outbox did not confirm", ex);
+			}
+			if (ex instanceof MessagePublishException || ex instanceof IllegalStateException) {
+				throw new SinkUnavailableException("Message queue did not confirm the traces reference", ex);
+			}
+			throw ex;
 		}
 	}
 

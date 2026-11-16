@@ -2,6 +2,7 @@
 package br.com.lhamalog.collector.ingestion.otlp.sink;
 
 import br.com.lhamalog.collector.ingestion.otlp.domain.Scoped;
+import io.opentelemetry.proto.collector.trace.v1.ExportTraceServiceRequest;
 import io.opentelemetry.proto.trace.v1.Span;
 import java.util.List;
 
@@ -21,5 +22,14 @@ public interface TracesSink {
 	 * @throws SinkRejectedException se o destino recusar spans como dado invalido
 	 */
 	void deliver(String tenantId, String productId, List<Scoped<Span>> acceptedSpans);
+
+	/**
+	 * Receives the decoded request so destinations that account for usage can
+	 * rebuild the canonical accepted envelope.
+	 */
+	default void deliver(String tenantId, String productId, ExportTraceServiceRequest request,
+			List<Scoped<Span>> acceptedSpans) {
+		deliver(tenantId, productId, acceptedSpans);
+	}
 
 }
