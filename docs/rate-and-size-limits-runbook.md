@@ -76,21 +76,21 @@ TOO_LARGE existente.
 **Propriedades:** `lhamalog.otlp.max-batch-size` (5MB),
 `lhamalog.otlp.max-message-size` (64MB).
 
-## Assinatura SUSPENSA → 403 / PERMISSION_DENIED (`reason=subscription_suspended`)
+## Assinatura SUSPENDED → 403 / PERMISSION_DENIED (`reason=subscription_suspended`)
 
 **Sintomas:** HTTP `403` / gRPC `PERMISSION_DENIED`; métrica
 `lhamalog.ingestion.refused{reason=subscription_suspended}`; nada publicado.
 
-**Causa:** `PlanSubscription.status=SUSPENSA` no Core (após taxa/tamanho ok).
+**Causa:** `PlanSubscription.status=SUSPENDED` no Core (documentos antigos com `SUSPENSA` continuam lidos) (após taxa/tamanho ok).
 
 **Ação:** no Core, regularize a assinatura do tenant; não force reenvio no Collector.
 
-**Propriedades:** status da assinatura no Core (default de documentos novos: `ATIVA`).
+**Propriedades:** status da assinatura no Core (default de documentos novos: `ACTIVE`; o Core ainda lê `ATIVA`/`SUSPENSA`/`INADIMPLENTE` de documentos antigos).
 
-## Assinatura INADIMPLENTE (carência 15 dias)
+## Assinatura DELINQUENT (carência 15 dias)
 
 **Sintomas durante a carência:** ingestão permitida (seguindo taxa/tamanho/saldo).
-**Após a carência:** igual a SUSPENSA → 403 / PERMISSION_DENIED.
+**Após a carência:** igual a SUSPENDED → 403 / PERMISSION_DENIED.
 **Sem `delinquentSince`:** ingestão permitida com WARN
 `event=subscription.delinquent.missing_since` (no Core).
 
@@ -165,7 +165,7 @@ tamanho → reserva.
 | `rate_limit_blocked` | bloqueio de violações (Retry-After 300) |
 | `batch_too_large` | lote > max-batch-size |
 | `insufficient_balance` | saldo insuficiente (Retry-After 120) |
-| `subscription_suspended` | assinatura SUSPENSA / carência INADIMPLENTE expirada |
+| `subscription_suspended` | assinatura SUSPENDED / carência DELINQUENT expirada |
 | `quota_unavailable` | Core/sem plano retentável (503 / 300) |
 | `quota_unavailable_exhausted` | orçamento 5 tentativas esgotado (500) |
 | `rate_limit_store_unavailable` | Redis rate-limit down (fail-open) |

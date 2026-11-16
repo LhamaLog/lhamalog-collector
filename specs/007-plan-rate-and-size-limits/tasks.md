@@ -159,7 +159,7 @@
 - [X] T047 [P] **Collector** (acompanhamento) Converter ao formato `event=` os demais logs fora do padrão: `BatchIngestion` (entrega ao destino, release/refund), `OtlpHttpServer`/`OtlpGrpcServer` (start/stop/falha inesperada), `MongoProductTokenStore`, `AbstractStreamPublisher`, `CoreAuthenticationProvider`, `CoreUsageFactsClient`, `UsageOutboxWorker`, `UsageOutboxObservability`, `UsageAcceptanceReconciler`, `RefundOutboxWorker`, `UsageRedisStartupValidator` — feito em 16/11/2026 (inclui os WARN dos schedulers em `OtlpReceiverConfiguration`); `StartupLogger` mantido.
 - [X] T048 [P] **Collector** (acompanhamento) Gerar correlation id por execução/item em `UsageOutboxWorker`, `RefundOutboxWorker`, `UsageAcceptanceReconciler` e nas retentativas assíncronas de `AbstractStreamPublisher` — feito em 16/11/2026 (MDC por item/execução com testes nos três workers).
 - [ ] T049 [P] **Core** (acompanhamento) Converter ao formato `event=` os logs de `LowBalanceNotificationService` e `UsageFactsSecurityConfiguration`, e gerar correlation id nos agendadores do Core
-- [ ] T050 **Collector** (pergunta ao Michel) Decidir se o `correlationId` do metadata dos streams (`TelemetryIngestedPublisher`, hoje UUID novo por publicação) passa a reutilizar o correlation id da requisição; muda a semântica consumida pelo Finder
+- [X] T050 **Collector** (aprovado pelo Michel em 16/11/2026) `metadata.correlationId` dos streams reutiliza o correlation id da requisição (`CorrelationId` / MDC); contrato Finder em `contracts/stream-correlation-id.md`; `schemaVersion` 1; dedup por `idempotencyId`
 - [X] T051 **Docs** Linha de inicialização da ADR_149 (`StartupLogger` nos dois repos) segue igual; apenas sai no novo formato de linha — revisar READMEs (seção Log de inicialização) quando a ADR for publicada — feito em 16/11/2026: README com seções “Padrão de logs” e “Limites por tenant (LLT-183)” e nota da linha de inicialização (ADR_149) no novo formato.
 
 ---
@@ -200,3 +200,17 @@ T025 || T026 || T027 || T028 || T029
 - Cobrança de excedente fora de escopo.
 - Não alterar `infra/local/.env`.
 - Não commit/push nesta fase Spec Kit.
+
+## Revisão de review (PRs #6 Collector / #11 Core) - 16/11/2026
+
+Itens de review pós-PR. Collector neste worktree; Core no PR #11 (pai marca).
+
+- [X] R01 **Core** (item 1) `overageBytes` gravado em cada reserva e revertido em release, refund e expiração (reaper), uma única vez (guarda pela transição de estado); legados sem o campo = 0; testes unitários e de integração.
+- [X] R02 **Core** (item 2) excedente calculado de forma atômica: `findAndModify` com pipeline de agregação (`$set`) calculando a parte acima da cota no momento da atualização; teste de concorrência com 50 threads (excedente ligado e desligado).
+- [X] R03 **Collector** (item 3 / T050) Stream `metadata.correlationId` = cid da requisição; contrato Finder; testes HTTP/gRPC; docs README + data-model 004
+- [X] R04 **Collector** (item 4) gRPC: trailer `retry-after` → `google.rpc.RetryInfo` em `grpc-status-details-bin`; HTTP Status com RetryInfo nos detalhes; testes/docs/contratos
+- [X] R05 **Collector** (item 5) Docs de integração: janela Core indisponível ~25 min vs default OTel `max_elapsed_time` 300s; exemplo YAML otlp/otlphttp + file_storage
+- [X] R06 **Collector** (item 6, parte Collector) Contrato `otlp-quota-rejection.md` alinhado (120/300/orçamento/RetryInfo/SUSPENDED); Javadoc Retry-After/trailer atualizado. **Parte enum Core** (ATIVA/SUSPENSA/INADIMPLENTE → ACTIVE/SUSPENDED/DELINQUENT): ver R06-Core abaixo
+- [X] R06-Core **Core** (item 6, enum) `SubscriptionStatus` = `ACTIVE`/`SUSPENDED`/`DELINQUENT`; leitura de documentos antigos em português via `@ReadingConverter` e `@JsonCreator` (sem diferenciar maiúsculas); escrita em inglês; docs do Collector alinhados.
+
+> **Decisão (sem mudança de código)**: regra dos 5 estouros — conta por requisição recusada e fica como está. Decidido pelo Michel em 16/11/2026 16:36.

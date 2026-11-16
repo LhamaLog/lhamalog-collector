@@ -215,7 +215,7 @@ Após autenticação, a ordem é **taxa → tamanho → reserva**. Propriedades 
 | `lhamalog.quota.unavailable-max-attempts` | `5` |
 | `lhamalog.quota.unavailable-attempt-ttl` | `30m` |
 
-Carência de assinatura INADIMPLENTE (`lhamalog.subscription.delinquency-grace`, default 15d) fica no **Core**. Runbook: [docs/rate-and-size-limits-runbook.md](docs/rate-and-size-limits-runbook.md).
+Carência de assinatura DELINQUENT (antes `INADIMPLENTE`) (`lhamalog.subscription.delinquency-grace`, default 15d) fica no **Core**. Runbook: [docs/rate-and-size-limits-runbook.md](docs/rate-and-size-limits-runbook.md).
 
 ### Clientes OTLP e janela “Core indisponível”
 
