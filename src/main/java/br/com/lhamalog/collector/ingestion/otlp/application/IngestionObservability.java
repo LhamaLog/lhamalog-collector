@@ -29,6 +29,8 @@ public final class IngestionObservability {
 			"quota_unavailable_attempt_store_unavailable";
 
 	public static final String OUTCOME_ACCEPTED = "accepted";
+	/** Some records stored, some rejected (validation or destination). */
+	public static final String OUTCOME_PARTIAL = "partial";
 	public static final String OUTCOME_REFUSED = "refused";
 	public static final String OUTCOME_FAILED = "failed";
 
@@ -113,7 +115,7 @@ public final class IngestionObservability {
 		}
 		return switch (decision) {
 			case IngestionDecision.Accepted a -> OUTCOME_ACCEPTED;
-			case IngestionDecision.PartiallyAccepted p -> OUTCOME_ACCEPTED;
+			case IngestionDecision.PartiallyAccepted p -> OUTCOME_PARTIAL;
 			case IngestionDecision.EmptySuccess e -> OUTCOME_ACCEPTED;
 			case IngestionDecision.DestinationUnavailable d -> OUTCOME_FAILED;
 			case IngestionDecision.CatalogUnavailable c -> OUTCOME_FAILED;

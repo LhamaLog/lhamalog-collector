@@ -51,5 +51,7 @@ class IngestionObservabilityMetersTest {
 				.isEqualTo("refused");
 		assertThat(IngestionObservability.outcomeOf(new IngestionDecision.DestinationUnavailable(5)))
 				.isEqualTo("failed");
+		assertThat(IngestionObservability.outcomeOf(new IngestionDecision.PartiallyAccepted(2, 1, "x")))
+				.isEqualTo("partial");
 	}
 }

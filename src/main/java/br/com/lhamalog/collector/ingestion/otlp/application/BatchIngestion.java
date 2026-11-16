@@ -225,6 +225,8 @@ final class BatchIngestion {
 				return new IngestionDecision.InvalidPayload(IngestionDecision.Reason.REJECTED_BY_DESTINATION,
 						"all " + rejected + " " + recordName + " were rejected: " + message);
 			}
+			recordPartialAcceptance(limits, metricSignal, ex.acceptedCount(), accepted.size(),
+					bytesOf.applyAsLong(request, accepted));
 			return new IngestionDecision.PartiallyAccepted(ex.acceptedCount(), rejected,
 					rejected + " " + recordName + " rejected: " + message);
 		}
@@ -291,6 +293,20 @@ final class BatchIngestion {
 			return false;
 		}
 		return message.getSerializedSize() > maxBatchBytes;
+	}
+
+	/**
+	 * OpenObserve partial acceptance: counts the records the destination stored. The destination does not say
+	 * which records were stored, so bytes are the delivered bytes scaled by the stored share (rounded down).
+	 */
+	static void recordPartialAcceptance(IngestionControls limits, String signal, int storedCount, int deliveredCount,
+			long deliveredBytes) {
+		if (storedCount <= 0 || deliveredCount <= 0) {
+			return;
+		}
+		int stored = Math.min(storedCount, deliveredCount);
+		long bytes = Math.max(0L, deliveredBytes) * stored / deliveredCount;
+		limits.observability().accepted(signal, IngestionProtocol.current(), stored, bytes);
 	}
 
 	private static long postDebitRetryAfter(String reservationId, long fallbackSeconds) {
