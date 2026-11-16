@@ -135,7 +135,7 @@ java -jar target/lhamalog-collector-0.0.1-SNAPSHOT.jar --spring.profiles.active=
 
 ## Receptor OTLP (LLT-181)
 
-O collector recebe logs e traces OTLP de cada produto e grava no **OpenObserve**, organização `lhamalog`, streams `logs` e `traces` (ADR_168). Métricas OTLP não são aceitas (HTTP 404, gRPC `UNIMPLEMENTED`).
+O collector recebe logs e traces OTLP de cada produto e grava no **OpenObserve**, organização `lhamalog` (ADR_168). A partir da LLT-185 cada tenant usa streams próprios (`logs_<tenant>` / `traces_<tenant>`; `OPENOBSERVE_LOGS_STREAM` / `OPENOBSERVE_TRACES_STREAM` são prefixos). Métricas OTLP não são aceitas (HTTP 404, gRPC `UNIMPLEMENTED`).
 
 | Canal | Caminho / serviço | Porta local | Porta prod |
 |---|---|---|---|
@@ -217,6 +217,13 @@ Após autenticação, a ordem é **taxa → tamanho → reserva**. Propriedades 
 
 Carência de assinatura INADIMPLENTE (`lhamalog.subscription.delinquency-grace`, default 15d) fica no **Core**. Runbook: [docs/rate-and-size-limits-runbook.md](docs/rate-and-size-limits-runbook.md).
 
+## Retenção de logs brutos por plano (LLT-185)
+
+- Stream OpenObserve **por tenant**; retenção (`data_retention`) aplicada via settings quando a reserva do Core traz `retentionDays` (FREE 7 … ENTERPRISE 90).
+- Assinatura antiga sem plano conta como FREE (7 dias) no Core. Sem `retentionDays` na resposta (Core antigo, quota desligada ou tenant sem assinatura ATIVA/INADIMPLENTE): grava no stream do tenant e mantém a retenção global do OO (`ZO_COMPACT_DATA_RETENTION_DAYS`).
+- Métrica: `lhamalog.openobserve.retention.apply{outcome,type}`. Falha de settings não recusa o lote.
+- Runbook (legado `logs`/`traces`, UNION, métricas): [docs/raw-log-retention-runbook.md](docs/raw-log-retention-runbook.md). Spec: `specs/009-raw-log-retention/`.
+
 ## Perfis de execução (ADR_151)
 
 | Perfil | Quando usar | De onde vêm as configurações |
@@ -262,7 +269,7 @@ No Linux/macOS: `OTLP_ENABLED=false make run-local`.
 | `OPENOBSERVE_URL` | sim | `https://openobserve:5080` |
 | `OPENOBSERVE_USERNAME` / `OPENOBSERVE_PASSWORD` | sim | credencial de ingestão do OpenObserve |
 | `OPENOBSERVE_ORGANIZATION` | não | `lhamalog` |
-| `OPENOBSERVE_LOGS_STREAM` / `OPENOBSERVE_TRACES_STREAM` | não | `logs` / `traces` |
+| `OPENOBSERVE_LOGS_STREAM` / `OPENOBSERVE_TRACES_STREAM` | não | prefixos `logs` / `traces` (stream = `{prefix}_{tenant}`) |
 | `OTLP_RECEIVER_HTTP_PORT` / `OTLP_RECEIVER_GRPC_PORT` | não | `4318` / `4317` |
 | `OTLP_RECEIVER_TIMESTAMP_MAX_AGE` / `OTLP_RECEIVER_TIMESTAMP_MAX_FUTURE` | não | `290m` / `1h` |
 | `OTLP_RECEIVER_HTTP_MAX_CONCURRENT_REQUESTS` / `OTLP_RECEIVER_HTTP_MAX_CONNECTIONS` | não | `200` / `1000` |
