@@ -3,6 +3,8 @@ package br.com.lhamalog.collector.ingestion.otlp.http;
 
 import br.com.lhamalog.collector.ingestion.otlp.application.ExportLogsService;
 import br.com.lhamalog.collector.ingestion.otlp.application.ExportTracesService;
+import br.com.lhamalog.collector.ingestion.otlp.application.IngestionObservability;
+import br.com.lhamalog.collector.ingestion.otlp.application.IngestionProtocol;
 import br.com.lhamalog.collector.ingestion.otlp.application.OtlpPayload;
 import br.com.lhamalog.collector.ingestion.otlp.application.PayloadRejectedException;
 import br.com.lhamalog.collector.ingestion.otlp.auth.BearerToken;
@@ -23,6 +25,7 @@ import java.io.OutputStream;
 import java.io.UncheckedIOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.Locale;
 import java.util.Map;
 import java.util.TreeMap;
@@ -74,6 +77,8 @@ public class OtlpHttpServer implements SmartLifecycle {
 
 	private final HttpLimits limits;
 
+	private final IngestionObservability observability;
+
 	private final Semaphore inFlight;
 
 	private HttpServer server;
@@ -81,16 +86,21 @@ public class OtlpHttpServer implements SmartLifecycle {
 	private ExecutorService executor;
 
 	public OtlpHttpServer(String host, int port, long maxMessageBytes, ExportLogsService logs, ExportTracesService traces) {
-		this(host, port, maxMessageBytes, maxMessageBytes, logs, traces, HttpLimits.DEFAULT);
+		this(host, port, maxMessageBytes, maxMessageBytes, logs, traces, HttpLimits.DEFAULT, IngestionObservability.NOOP);
 	}
 
 	public OtlpHttpServer(String host, int port, long maxMessageBytes, ExportLogsService logs, ExportTracesService traces,
 			HttpLimits limits) {
-		this(host, port, maxMessageBytes, maxMessageBytes, logs, traces, limits);
+		this(host, port, maxMessageBytes, maxMessageBytes, logs, traces, limits, IngestionObservability.NOOP);
 	}
 
 	public OtlpHttpServer(String host, int port, long maxMessageBytes, long maxBatchBytes, ExportLogsService logs,
 			ExportTracesService traces, HttpLimits limits) {
+		this(host, port, maxMessageBytes, maxBatchBytes, logs, traces, limits, IngestionObservability.NOOP);
+	}
+
+	public OtlpHttpServer(String host, int port, long maxMessageBytes, long maxBatchBytes, ExportLogsService logs,
+			ExportTracesService traces, HttpLimits limits, IngestionObservability observability) {
 		if (maxMessageBytes <= 0) {
 			throw new IllegalArgumentException("maxMessageBytes must be positive");
 		}
@@ -104,6 +114,7 @@ public class OtlpHttpServer implements SmartLifecycle {
 		this.logs = logs;
 		this.traces = traces;
 		this.limits = limits;
+		this.observability = observability == null ? IngestionObservability.NOOP : observability;
 		this.inFlight = new Semaphore(limits.maxConcurrentRequests());
 	}
 
@@ -174,21 +185,31 @@ public class OtlpHttpServer implements SmartLifecycle {
 		String correlationId = CorrelationId.resolve(exchange.getRequestHeaders().getFirst(CorrelationId.HEADER));
 		CorrelationId.put(correlationId);
 		exchange.getResponseHeaders().set(CorrelationId.HEADER, correlationId);
+		IngestionProtocol.set(IngestionProtocol.HTTP);
+		long started = System.nanoTime();
+		String signalTag = "unknown";
+		String outcome = IngestionObservability.OUTCOME_FAILED;
 		try {
 			if (!inFlight.tryAcquire()) {
 				try (exchange) {
 					write(exchange, OtlpHttpStatusMapper.overloaded(), responseType(exchange));
 				}
+				outcome = IngestionObservability.OUTCOME_FAILED;
 				return;
 			}
 			try {
-				dispatch(exchange);
+				DispatchResult result = dispatch(exchange);
+				signalTag = result.signal();
+				outcome = result.outcome();
 			}
 			finally {
 				inFlight.release();
 			}
 		}
 		finally {
+			observability.latency(signalTag, IngestionProtocol.HTTP, outcome,
+					Duration.ofNanos(System.nanoTime() - started));
+			IngestionProtocol.clear();
 			CorrelationId.clear();
 		}
 	}
@@ -197,7 +218,8 @@ public class OtlpHttpServer implements SmartLifecycle {
 		return JSON.equals(mediaType(exchange.getRequestHeaders().getFirst("Content-Type"))) ? JSON : PROTOBUF;
 	}
 
-	private void dispatch(HttpExchange exchange) throws IOException {
+	private DispatchResult dispatch(HttpExchange exchange) throws IOException {
+		String signalTag = "unknown";
 		try (exchange) {
 			String contentType = mediaType(exchange.getRequestHeaders().getFirst("Content-Type"));
 			String responseType = JSON.equals(contentType) ? JSON : PROTOBUF;
@@ -209,11 +231,12 @@ public class OtlpHttpServer implements SmartLifecycle {
 			};
 			if (signal == null) {
 				write(exchange, OtlpHttpStatusMapper.notFound(), responseType);
-				return;
+				return new DispatchResult(signalTag, IngestionObservability.OUTCOME_REFUSED);
 			}
+			signalTag = signal == Signal.LOGS ? "logs" : "traces";
 			if (!"POST".equals(exchange.getRequestMethod())) {
 				write(exchange, OtlpHttpStatusMapper.methodNotAllowed(), responseType);
-				return;
+				return new DispatchResult(signalTag, IngestionObservability.OUTCOME_REFUSED);
 			}
 			// Content type and encoding are checked inside the lazy payload, after the token (401 before 415).
 			String bearer = BearerToken.extract(exchange.getRequestHeaders().getFirst("Authorization"));
@@ -221,11 +244,15 @@ public class OtlpHttpServer implements SmartLifecycle {
 					? logs.export(bearer, payload(exchange, contentType, ExportLogsServiceRequest.newBuilder()))
 					: traces.export(bearer, payload(exchange, contentType, ExportTraceServiceRequest.newBuilder()));
 			write(exchange, OtlpHttpStatusMapper.map(decision, signal), responseType);
+			return new DispatchResult(signalTag, IngestionObservability.outcomeOf(decision));
 		}
 		catch (RuntimeException ex) {
 			log.error("event=otlp.http.unexpected_failure | Unexpected failure in OTLP/HTTP receiver", ex);
 			throw ex;
 		}
+	}
+
+	private record DispatchResult(String signal, String outcome) {
 	}
 
 	@SuppressWarnings("unchecked")

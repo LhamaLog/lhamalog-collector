@@ -17,6 +17,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
+import java.util.function.ToLongBiFunction;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -74,7 +75,17 @@ final class BatchIngestion {
 	static <R, T> IngestionDecision run(TokenValidator tokens, String bearerToken, OtlpPayload<R> payload,
 			Function<R, BatchAssessment<T>> assessment, Delivery<R, T> sink, String recordName, String rejectionReason,
 			QuotaGate<R, T> quota, BatchSanitizer<R, T> sanitizer, IngestionControls controls) {
+		return run(tokens, bearerToken, payload, assessment, sink, recordName, rejectionReason, quota, sanitizer,
+				controls, "unknown", (request, accepted) -> 0L);
+	}
+
+	static <R, T> IngestionDecision run(TokenValidator tokens, String bearerToken, OtlpPayload<R> payload,
+			Function<R, BatchAssessment<T>> assessment, Delivery<R, T> sink, String recordName, String rejectionReason,
+			QuotaGate<R, T> quota, BatchSanitizer<R, T> sanitizer, IngestionControls controls, String signal,
+			ToLongBiFunction<R, List<T>> acceptedBytes) {
 		IngestionControls limits = controls == null ? IngestionControls.permissive() : controls;
+		ToLongBiFunction<R, List<T>> bytesOf = acceptedBytes == null ? (request, accepted) -> 0L : acceptedBytes;
+		String metricSignal = signal == null || signal.isBlank() ? "unknown" : signal;
 		TokenValidationResult auth = tokens.validate(bearerToken);
 		TokenValidationResult.Valid valid;
 		switch (auth) {
@@ -227,6 +238,10 @@ final class BatchIngestion {
 		}
 		finally {
 			ReservationCorrelation.clear();
+		}
+		if (!accepted.isEmpty()) {
+			limits.observability().accepted(metricSignal, IngestionProtocol.current(), accepted.size(),
+					bytesOf.applyAsLong(request, accepted));
 		}
 		if (batch.rejectedCount() == 0) {
 			return new IngestionDecision.Accepted(batch.valid().size());

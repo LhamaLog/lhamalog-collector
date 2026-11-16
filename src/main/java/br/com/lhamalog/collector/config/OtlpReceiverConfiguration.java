@@ -342,17 +342,19 @@ public class OtlpReceiverConfiguration {
 
 	@Bean
 	@ConditionalOnBooleanProperty(name = "lhamalog.otlp.http.enabled", matchIfMissing = true)
-	OtlpHttpServer otlpHttpServer(OtlpReceiverProperties properties, ExportLogsService logs, ExportTracesService traces) {
+	OtlpHttpServer otlpHttpServer(OtlpReceiverProperties properties, ExportLogsService logs, ExportTracesService traces,
+			IngestionObservability observability) {
 		return new OtlpHttpServer(properties.http().host(), properties.http().port(),
 				properties.maxMessageBytes(), properties.effectiveMaxBatchBytes(), logs, traces,
-				properties.httpLimits().toLimits());
+				properties.httpLimits().toLimits(), observability);
 	}
 
 	@Bean
 	@ConditionalOnBooleanProperty(name = "lhamalog.otlp.grpc.enabled", matchIfMissing = true)
-	OtlpGrpcServer otlpGrpcServer(OtlpReceiverProperties properties, ExportLogsService logs, ExportTracesService traces) {
+	OtlpGrpcServer otlpGrpcServer(OtlpReceiverProperties properties, ExportLogsService logs, ExportTracesService traces,
+			IngestionObservability observability) {
 		return new OtlpGrpcServer(properties.grpc().host(), properties.grpc().port(),
-				properties.maxMessageBytes(), logs, traces);
+				properties.maxMessageBytes(), logs, traces, observability);
 	}
 
 }
