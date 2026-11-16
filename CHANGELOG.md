@@ -7,6 +7,16 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 
 ## [Não lançado]
 
+### Adicionado (LLT-185)
+
+- Stream OpenObserve por tenant (`{prefixo}_{tenant}`, com hash quando o id é alterado) para logs e traces.
+- Retenção por plano aplicada no stream via `PUT /api/{org}/streams/{s}/settings` com o `retentionDays` da reserva do Core (cache de 1 h, backoff de 60 s, fila limitada).
+- Métrica `lhamalog.openobserve.retention.apply{outcome,type}` e runbook `docs/raw-log-retention-runbook.md`.
+
+### Alterado (LLT-185)
+
+- `OPENOBSERVE_LOGS_STREAM` / `OPENOBSERVE_TRACES_STREAM` passam a ser prefixos. O stream compartilhado `logs`/`traces` deixa de receber dados novos (migração só documentada).
+
 
 ### Adicionado (LLT-186)
 

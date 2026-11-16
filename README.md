@@ -220,7 +220,8 @@ Carência de assinatura INADIMPLENTE (`lhamalog.subscription.delinquency-grace`,
 ## Retenção de logs brutos por plano (LLT-185)
 
 - Stream OpenObserve **por tenant**; retenção (`data_retention`) aplicada via settings quando a reserva do Core traz `retentionDays` (FREE 7 … ENTERPRISE 90).
-- Assinatura antiga sem plano conta como FREE (7 dias) no Core. Sem `retentionDays` na resposta (Core antigo, quota desligada ou tenant sem assinatura ATIVA/INADIMPLENTE): grava no stream do tenant e mantém a retenção global do OO (`ZO_COMPACT_DATA_RETENTION_DAYS`).
+- Assinatura antiga sem plano conta como FREE (7 dias) no Core. Sem `retentionDays` na resposta (Core antigo, quota desligada ou tenant sem assinatura ATIVA ou INADIMPLENTE dentro da carência): grava no stream do tenant e mantém a retenção global do OO (`ZO_COMPACT_DATA_RETENTION_DAYS`).
+- Override dos dias por plano no **Core** (ex.: `LHAMALOG_PLANS_RETENTIONDAYS_FREE=10` ou `lhamalog.plans.retention-days.free=10`); ver o runbook.
 - Métrica: `lhamalog.openobserve.retention.apply{outcome,type}`. Falha de settings não recusa o lote.
 - Runbook (legado `logs`/`traces`, UNION, métricas): [docs/raw-log-retention-runbook.md](docs/raw-log-retention-runbook.md). Spec: `specs/009-raw-log-retention/`.
 

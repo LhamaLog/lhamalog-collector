@@ -20,3 +20,9 @@
 - As 5 perguntas foram respondidas; só a 2 mudou o comportamento: assinatura sem plano agora conta como FREE (7 dias) no Core.
 - Collector sem mudança de código; docs e contrato atualizados.
 - Verificação local refeita às 16:44 (BRT): FREE 7, PRO 30, sem plano 7. Verify: Core 120 testes (1 falha conhecida LLT-175, 5 ignorados); Collector 307 testes, 0 falhas.
+
+## Checkpoint 16/11/2026 17:50 (BRT) — review do BimBot
+
+- Bloqueante corrigido: INADIMPLENTE com carência vencida não conta mais na retenção (spec, decisão 4, atualizada).
+- Não bloqueantes: ver T027. Nada commitado.
+

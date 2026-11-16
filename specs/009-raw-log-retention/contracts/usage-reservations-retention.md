@@ -27,13 +27,15 @@ FREE 7, STARTER 15, PRO 30, BUSINESS 90, ENTERPRISE 90.
 
 ### Agregação multi-produto (decidido pelo Michel em 16/11/2026 16:36)
 
-Um tenant pode ter uma assinatura por produto com tiers diferentes. O stream OpenObserve é **por tenant**. Core MUST enviar o **máximo** `retencaoDias` entre assinaturas ativas com plano, para que nenhum produto perca dados. Assinaturas consideráveis: ATIVA e INADIMPLENTE (inclusive na carência); SUSPENSA não conta. Assinatura antiga **sem `planTier` conta como FREE (7 dias)**. O Core omite `retentionDays` (null) **somente** quando o tenant não tem nenhuma assinatura considerável.
+Um tenant pode ter uma assinatura por produto com tiers diferentes. O stream OpenObserve é **por tenant**. Core MUST enviar o **máximo** `retencaoDias` entre assinaturas ativas com plano, para que nenhum produto perca dados. Assinaturas consideráveis: ATIVA e INADIMPLENTE só dentro da carência (`lhamalog.subscription.delinquency-grace`, padrão 15 dias, mesma regra da reserva: vencida a partir de `delinquentSince + carência`, inclusive); SUSPENSA e INADIMPLENTE com carência vencida não contam. Assinatura antiga **sem `planTier` conta como FREE (7 dias)**. O Core omite `retentionDays` (null) **somente** quando o tenant não tem nenhuma assinatura considerável.
 
 ## Resposta (não autoriza)
 
 `INSUFFICIENT_BALANCE`, `NO_PLAN`, `SUSPENDED`, etc. **MAY** omitir `retentionDays`. Collector MUST ignorar o campo se o outcome não autorizar escrita.
 
 ## Parsing no Collector
+
+- Não inteiro (`7.5`, `7.0`), string ou fora do intervalo de `int` → **unknown** com WARN `event=quota.reservation.retention_invalid`; nunca arredonda (arredondar para cima guardaria além do plano; para baixo apagaria dado pago).
 
 - Ausente, JSON null, ou inteiro ≤ 0 → **unknown** → não chama settings.
 - Inteiro > 0 → conhecido; após ingest OK, garantir settings.
