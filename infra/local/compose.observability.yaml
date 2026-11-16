@@ -1,12 +1,14 @@
 # Stack de observabilidade do Collector (LLT-187). Projeto separado: nao usa secrets do compose.yaml.
 # make metrics-up  |  docker compose -p lhamalog-observability -f infra/local/compose.observability.yaml up -d
+# Portas publicadas so em 127.0.0.1 (LLT-187 review): nada fica exposto na rede local.
+# Grafana sem acesso anonimo: login com GRAFANA_ADMIN_USER / GRAFANA_ADMIN_PASSWORD do infra/local/.env.
 name: lhamalog-observability
 
 services:
   prometheus:
     image: prom/prometheus:v3.5.0
     ports:
-      - "${PROMETHEUS_PORT:-9090}:9090"
+      - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
     volumes:
       - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
     extra_hosts:
@@ -18,7 +20,7 @@ services:
   loki:
     image: grafana/loki:3.5.3
     ports:
-      - "${LOKI_PORT:-3100}:3100"
+      - "127.0.0.1:${LOKI_PORT:-3100}:3100"
     volumes:
       - ./observability/loki/loki-config.yaml:/etc/loki/local-config.yaml:ro
     command: ["-config.file=/etc/loki/local-config.yaml"]
@@ -38,12 +40,12 @@ services:
   grafana:
     image: grafana/grafana:12.2.0
     ports:
-      - "${GRAFANA_PORT:-3000}:3000"
+      - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
     environment:
       GF_SECURITY_ADMIN_USER: "${GRAFANA_ADMIN_USER:-admin}"
-      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:-change-me}"
-      GF_AUTH_ANONYMOUS_ENABLED: "true"
-      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:?Defina GRAFANA_ADMIN_PASSWORD no infra/local/.env}"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_AUTH_DISABLE_LOGIN_FORM: "false"
       GF_USERS_DEFAULT_THEME: light
     volumes:
       - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro

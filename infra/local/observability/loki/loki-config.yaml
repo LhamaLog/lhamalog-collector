@@ -1,3 +1,6 @@
+# Single-tenant local: sem X-Scope-OrgID. Aceitavel so porque a porta 3100 e publicada em 127.0.0.1
+# (compose.observability.yaml) e o Alloy fala com o Loki pela rede interna do compose. Em ambiente
+# compartilhado: auth_enabled: true + proxy autenticado na frente (fora do escopo da LLT-187).
 auth_enabled: false
 
 server:
