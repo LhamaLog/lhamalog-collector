@@ -122,7 +122,8 @@ class QuotaReservationRestartIntegrationTest {
 		ExportLogsService service = logsService(gate);
 		ExportLogsServiceRequest request = logsBatch("restart-reserve");
 
-		assertThat(service.export("bearer", () -> request)).isEqualTo(new IngestionDecision.QuotaUnavailable());
+		assertThat(service.export("bearer", () -> request))
+				.isEqualTo(new IngestionDecision.QuotaUnavailable(300));
 		assertThat(coreCalls).containsExactly("reserve", "confirm");
 		assertThat(deliveries).isEmpty();
 		assertThat(reservationIds).hasSize(1);
@@ -172,7 +173,7 @@ class QuotaReservationRestartIntegrationTest {
 		};
 		RefundOutboxWorker freshWorker = new RefundOutboxWorker(restartedOutbox, refundClient,
 				new QuotaProperties(true, Duration.ofSeconds(1), Duration.ofSeconds(1), Duration.ofMillis(250),
-						Duration.ofSeconds(2)),
+						Duration.ofSeconds(2), Duration.ofSeconds(300), 5, Duration.ofMinutes(30)),
 				CLOCK);
 		freshWorker.runOnce();
 

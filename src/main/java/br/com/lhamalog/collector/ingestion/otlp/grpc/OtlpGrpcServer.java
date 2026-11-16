@@ -115,7 +115,13 @@ public class OtlpGrpcServer implements SmartLifecycle {
 			case IngestionDecision.DestinationUnavailable d -> Status.UNAVAILABLE.withDescription("destination unavailable, retry later");
 			case IngestionDecision.QuotaExceeded q -> Status.RESOURCE_EXHAUSTED.withDescription("ingestion quota exhausted, retry later");
 			case IngestionDecision.QuotaUnavailable q -> Status.UNAVAILABLE.withDescription("ingestion quota unavailable, retry later");
+			case IngestionDecision.QuotaUnavailableExhausted e -> Status.INTERNAL
+					.withDescription("core unavailable: retry budget exhausted, batch dropped");
+			case IngestionDecision.RateLimited r -> Status.RESOURCE_EXHAUSTED.withDescription("ingestion rate limited, retry later");
+			case IngestionDecision.BatchTooLarge b -> Status.RESOURCE_EXHAUSTED.withDescription("OTLP batch exceeds the application size limit");
+			case IngestionDecision.Suspended s -> Status.PERMISSION_DENIED.withDescription("subscription suspended");
 			case IngestionDecision.InvalidPayload p -> p.reason() == IngestionDecision.Reason.TOO_LARGE
+					|| p.reason() == IngestionDecision.Reason.BATCH_TOO_LARGE
 					? Status.RESOURCE_EXHAUSTED.withDescription(p.message()) : Status.INVALID_ARGUMENT.withDescription(p.message());
 			case IngestionDecision.EmptySuccess e -> null;
 			case IngestionDecision.Accepted a -> null;
@@ -130,10 +136,10 @@ public class OtlpGrpcServer implements SmartLifecycle {
 			Function<IngestionDecision.PartiallyAccepted, A> partial) {
 		Status failure = failureStatus(decision);
 		if (failure != null) {
-			if (decision instanceof IngestionDecision.QuotaExceeded
-					|| decision instanceof IngestionDecision.QuotaUnavailable) {
+			String retryAfter = retryAfterSeconds(decision);
+			if (retryAfter != null) {
 				Metadata trailers = new Metadata();
-				trailers.put(RETRY_AFTER, "120");
+				trailers.put(RETRY_AFTER, retryAfter);
 				observer.onError(failure.asRuntimeException(trailers));
 			}
 			else {
@@ -143,6 +149,15 @@ public class OtlpGrpcServer implements SmartLifecycle {
 		}
 		observer.onNext(decision instanceof IngestionDecision.PartiallyAccepted p ? partial.apply(p) : ok);
 		observer.onCompleted();
+	}
+
+	private static String retryAfterSeconds(IngestionDecision decision) {
+		return switch (decision) {
+			case IngestionDecision.QuotaExceeded q -> "120";
+			case IngestionDecision.QuotaUnavailable q -> Long.toString(q.retryAfterSeconds());
+			case IngestionDecision.RateLimited r -> Long.toString(r.retryAfterSeconds());
+			default -> null;
+		};
 	}
 
 	private final class LogsEndpoint extends LogsServiceGrpc.LogsServiceImplBase {

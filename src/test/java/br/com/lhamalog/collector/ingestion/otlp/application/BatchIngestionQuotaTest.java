@@ -151,6 +151,67 @@ class BatchIngestionQuotaTest {
 	}
 
 	@Test
+	void suspendedRefusesWithoutConfirmReleaseRefundOrAttemptBudget() {
+		AtomicInteger delivered = new AtomicInteger();
+		AtomicInteger attempts = new AtomicInteger();
+		AtomicInteger confirms = new AtomicInteger();
+		AtomicInteger releases = new AtomicInteger();
+		AtomicInteger refunds = new AtomicInteger();
+		QuotaGate<String, String> quota = new QuotaGate<>() {
+			@Override
+			public Reservation reserve(String tenant, String product, String request, List<String> accepted) {
+				return new Reservation(Reservation.Outcome.SUSPENDED, "reservation-suspended");
+			}
+
+			@Override
+			public String batchKey(String tenant, String product, String request, List<String> accepted) {
+				return "reservation-suspended";
+			}
+
+			@Override
+			public void confirm(String reservationId) {
+				confirms.incrementAndGet();
+			}
+
+			@Override
+			public void release(String reservationId) {
+				releases.incrementAndGet();
+			}
+
+			@Override
+			public void refund(String reservationId, String reason) {
+				refunds.incrementAndGet();
+			}
+		};
+		CoreUnavailableAttemptTracker tracker = new CoreUnavailableAttemptTracker() {
+			@Override
+			public CoreUnavailableAttemptResult record(String batchKey) {
+				attempts.incrementAndGet();
+				return new CoreUnavailableAttemptResult.WithinBudget(1, 300);
+			}
+
+			@Override
+			public void clear(String batchKey) {
+			}
+		};
+		IngestionControls controls = new IngestionControls(
+				br.com.lhamalog.collector.ingestion.otlp.ratelimit.TenantRateLimiter.allowAll(), Integer.MAX_VALUE, 300,
+				5, 300, tracker, IngestionObservability.NOOP);
+
+		IngestionDecision result = BatchIngestion.run(token -> new TokenValidationResult.Valid("tenant", "product"),
+				"token", () -> "body", ignored -> new BatchAssessment<>(List.of("record"), 0),
+				(tenant, product, request, records) -> delivered.incrementAndGet(), "records", "invalid", quota,
+				BatchSanitizer.identity(), controls);
+
+		assertThat(result).isEqualTo(new IngestionDecision.Suspended());
+		assertThat(delivered).hasValue(0);
+		assertThat(attempts).hasValue(0);
+		assertThat(confirms).hasValue(0);
+		assertThat(releases).hasValue(0);
+		assertThat(refunds).hasValue(0);
+	}
+
+	@Test
 	void returnsRetryAfter120WhenPostConfirmSinkFails() {
 		IngestionDecision result = run(new AuthorizedGate(), BatchSanitizer.identity(),
 				(tenant, product, request, records) -> {

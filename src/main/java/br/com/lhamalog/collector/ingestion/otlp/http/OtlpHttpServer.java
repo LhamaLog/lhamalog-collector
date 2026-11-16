@@ -65,6 +65,8 @@ public class OtlpHttpServer implements SmartLifecycle {
 
 	private final long maxMessageBytes;
 
+	private final long maxBatchBytes;
+
 	private final ExportLogsService logs;
 
 	private final ExportTracesService traces;
@@ -78,17 +80,26 @@ public class OtlpHttpServer implements SmartLifecycle {
 	private ExecutorService executor;
 
 	public OtlpHttpServer(String host, int port, long maxMessageBytes, ExportLogsService logs, ExportTracesService traces) {
-		this(host, port, maxMessageBytes, logs, traces, HttpLimits.DEFAULT);
+		this(host, port, maxMessageBytes, maxMessageBytes, logs, traces, HttpLimits.DEFAULT);
 	}
 
 	public OtlpHttpServer(String host, int port, long maxMessageBytes, ExportLogsService logs, ExportTracesService traces,
 			HttpLimits limits) {
+		this(host, port, maxMessageBytes, maxMessageBytes, logs, traces, limits);
+	}
+
+	public OtlpHttpServer(String host, int port, long maxMessageBytes, long maxBatchBytes, ExportLogsService logs,
+			ExportTracesService traces, HttpLimits limits) {
 		if (maxMessageBytes <= 0) {
 			throw new IllegalArgumentException("maxMessageBytes must be positive");
+		}
+		if (maxBatchBytes <= 0) {
+			throw new IllegalArgumentException("maxBatchBytes must be positive");
 		}
 		this.host = host;
 		this.port = port;
 		this.maxMessageBytes = maxMessageBytes;
+		this.maxBatchBytes = Math.min(maxBatchBytes, maxMessageBytes);
 		this.logs = logs;
 		this.traces = traces;
 		this.limits = limits;
@@ -222,11 +233,20 @@ public class OtlpHttpServer implements SmartLifecycle {
 				throw new PayloadRejectedException(IngestionDecision.Reason.UNSUPPORTED_ENCODING,
 						"unsupported content encoding; use gzip or none");
 			}
-			if (!gzip && declaredLength(exchange) > maxMessageBytes) {
+			long declared = declaredLength(exchange);
+			if (!gzip && declared > maxMessageBytes) {
 				throw new PayloadRejectedException(IngestionDecision.Reason.TOO_LARGE,
 						"body exceeds the limit of " + maxMessageBytes + " bytes");
 			}
+			if (!gzip && declared > maxBatchBytes) {
+				throw new PayloadRejectedException(IngestionDecision.Reason.BATCH_TOO_LARGE,
+						"body exceeds the application batch limit of " + maxBatchBytes + " bytes");
+			}
 			byte[] body = readBody(exchange.getRequestBody(), gzip);
+			if (body.length > maxBatchBytes) {
+				throw new PayloadRejectedException(IngestionDecision.Reason.BATCH_TOO_LARGE,
+						"decompressed body exceeds the application batch limit of " + maxBatchBytes + " bytes");
+			}
 			try {
 				if (JSON.equals(contentType)) {
 					OtlpJson.parse(body, builder);

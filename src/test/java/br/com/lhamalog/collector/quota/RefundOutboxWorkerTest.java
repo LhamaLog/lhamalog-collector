@@ -58,7 +58,8 @@ class RefundOutboxWorkerTest {
 	}
 
 	private static QuotaProperties properties() {
-		return new QuotaProperties(true, Duration.ofSeconds(1), Duration.ofSeconds(1), Duration.ofMillis(250), Duration.ofSeconds(2));
+		return new QuotaProperties(true, Duration.ofSeconds(1), Duration.ofSeconds(1), Duration.ofMillis(250),
+				Duration.ofSeconds(2), Duration.ofSeconds(300), 5, Duration.ofMinutes(30));
 	}
 
 	private static QuotaReservationClient client(int status) {

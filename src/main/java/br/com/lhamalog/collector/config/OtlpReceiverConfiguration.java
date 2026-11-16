@@ -4,10 +4,16 @@ package br.com.lhamalog.collector.config;
 import br.com.lhamalog.collector.ingestion.otlp.application.ExportLogsService;
 import br.com.lhamalog.collector.ingestion.otlp.application.ExportTracesService;
 import br.com.lhamalog.collector.ingestion.otlp.application.BatchSanitizer;
+import br.com.lhamalog.collector.ingestion.otlp.application.CoreUnavailableAttemptTracker;
+import br.com.lhamalog.collector.ingestion.otlp.application.IngestionControls;
+import br.com.lhamalog.collector.ingestion.otlp.application.IngestionObservability;
+import br.com.lhamalog.collector.ingestion.otlp.application.RedisCoreUnavailableAttemptTracker;
 import br.com.lhamalog.collector.ingestion.otlp.auth.MongoProductTokenStore;
 import br.com.lhamalog.collector.ingestion.otlp.auth.TokenValidator;
 import br.com.lhamalog.collector.ingestion.otlp.grpc.OtlpGrpcServer;
 import br.com.lhamalog.collector.ingestion.otlp.http.OtlpHttpServer;
+import br.com.lhamalog.collector.ingestion.otlp.ratelimit.RedisRateLimiter;
+import br.com.lhamalog.collector.ingestion.otlp.ratelimit.TenantRateLimiter;
 import br.com.lhamalog.collector.ingestion.otlp.sink.LogIngestedPublisher;
 import br.com.lhamalog.collector.ingestion.otlp.sink.LogsSink;
 import br.com.lhamalog.collector.ingestion.otlp.sink.OpenObserveClient;
@@ -270,25 +276,61 @@ public class OtlpReceiverConfiguration {
 	}
 
 	@Bean
+	IngestionObservability ingestionObservability(io.micrometer.core.instrument.MeterRegistry meters) {
+		return new IngestionObservability(meters);
+	}
+
+	@Bean
+	TenantRateLimiter tenantRateLimiter(RateLimitProperties rateLimit, ObjectProvider<StringRedisTemplate> redis,
+			IngestionObservability observability) {
+		if (!rateLimit.enabled()) {
+			return TenantRateLimiter.allowAll();
+		}
+		StringRedisTemplate template = redis.getIfAvailable();
+		if (template == null) {
+			return TenantRateLimiter.allowAll();
+		}
+		return new RedisRateLimiter(template, rateLimit, observability);
+	}
+
+	@Bean
+	CoreUnavailableAttemptTracker coreUnavailableAttemptTracker(QuotaProperties quota,
+			ObjectProvider<StringRedisTemplate> redis, IngestionObservability observability) {
+		StringRedisTemplate template = redis.getIfAvailable();
+		if (template == null) {
+			return CoreUnavailableAttemptTracker.alwaysRetryable(quota.unavailableRetryAfterSeconds());
+		}
+		return new RedisCoreUnavailableAttemptTracker(template, quota, observability);
+	}
+
+	@Bean
+	IngestionControls ingestionControls(OtlpReceiverProperties otlp, RateLimitProperties rateLimit,
+			QuotaProperties quota, TenantRateLimiter rateLimiter, CoreUnavailableAttemptTracker unavailableAttempts,
+			IngestionObservability observability) {
+		return new IngestionControls(rateLimiter, otlp.effectiveMaxBatchBytes(), quota.unavailableRetryAfterSeconds(),
+				rateLimit.retryAfterSeconds(), rateLimit.blockRetryAfterSeconds(), unavailableAttempts, observability);
+	}
+
+	@Bean
 	ExportLogsService exportLogsService(TokenValidator tokens, LogsSink sink, OtlpReceiverProperties properties,
 			ObjectProvider<QuotaReservationClient> quotas, ObjectProvider<RefundOutboxRepository> refunds,
-			ObjectProvider<QuotaObservability> observability, QuotaE2eProperties e2e) {
+			ObjectProvider<QuotaObservability> observability, QuotaE2eProperties e2e, IngestionControls controls) {
 		QuotaReservationClient quota = quotas.getIfAvailable();
 		return new ExportLogsService(tokens, sink, properties.timestamp().toWindow(), Clock.systemUTC(),
 				quota == null ? null : new CanonicalQuotaGate<>(quota, refunds.getIfAvailable(),
 						observability.getIfAvailable(() -> QuotaObservability.NOOP)),
-				(request, accepted) -> sanitizeForE2e(request.toString(), accepted, e2e.enabled()));
+				(request, accepted) -> sanitizeForE2e(request.toString(), accepted, e2e.enabled()), controls);
 	}
 
 	@Bean
 	ExportTracesService exportTracesService(TokenValidator tokens, TracesSink sink, OtlpReceiverProperties properties,
 			ObjectProvider<QuotaReservationClient> quotas, ObjectProvider<RefundOutboxRepository> refunds,
-			ObjectProvider<QuotaObservability> observability, QuotaE2eProperties e2e) {
+			ObjectProvider<QuotaObservability> observability, QuotaE2eProperties e2e, IngestionControls controls) {
 		QuotaReservationClient quota = quotas.getIfAvailable();
 		return new ExportTracesService(tokens, sink, properties.timestamp().toWindow(), Clock.systemUTC(),
 				quota == null ? null : new CanonicalQuotaGate<>(quota, refunds.getIfAvailable(),
 						observability.getIfAvailable(() -> QuotaObservability.NOOP)),
-				(request, accepted) -> sanitizeForE2e(request.toString(), accepted, e2e.enabled()));
+				(request, accepted) -> sanitizeForE2e(request.toString(), accepted, e2e.enabled()), controls);
 	}
 
 	private static <T> java.util.List<T> sanitizeForE2e(String request, java.util.List<T> accepted, boolean enabled) {
@@ -302,7 +344,8 @@ public class OtlpReceiverConfiguration {
 	@ConditionalOnBooleanProperty(name = "lhamalog.otlp.http.enabled", matchIfMissing = true)
 	OtlpHttpServer otlpHttpServer(OtlpReceiverProperties properties, ExportLogsService logs, ExportTracesService traces) {
 		return new OtlpHttpServer(properties.http().host(), properties.http().port(),
-				properties.maxMessageBytes(), logs, traces, properties.httpLimits().toLimits());
+				properties.maxMessageBytes(), properties.effectiveMaxBatchBytes(), logs, traces,
+				properties.httpLimits().toLimits());
 	}
 
 	@Bean

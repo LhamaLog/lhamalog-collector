@@ -26,6 +26,7 @@ public class ExportLogsService {
 
 	private final QuotaGate<ExportLogsServiceRequest, br.com.lhamalog.collector.ingestion.otlp.domain.Scoped<io.opentelemetry.proto.logs.v1.LogRecord>> quota;
 	private final BatchSanitizer<ExportLogsServiceRequest, br.com.lhamalog.collector.ingestion.otlp.domain.Scoped<io.opentelemetry.proto.logs.v1.LogRecord>> sanitizer;
+	private final IngestionControls controls;
 
 	public ExportLogsService(TokenValidator tokens, LogsSink sink) {
 		this(tokens, sink, TimestampWindow.DEFAULT, Clock.systemUTC(), null);
@@ -43,12 +44,20 @@ public class ExportLogsService {
 	public ExportLogsService(TokenValidator tokens, LogsSink sink, TimestampWindow window, Clock clock,
 			QuotaGate<ExportLogsServiceRequest, br.com.lhamalog.collector.ingestion.otlp.domain.Scoped<io.opentelemetry.proto.logs.v1.LogRecord>> quota,
 			BatchSanitizer<ExportLogsServiceRequest, br.com.lhamalog.collector.ingestion.otlp.domain.Scoped<io.opentelemetry.proto.logs.v1.LogRecord>> sanitizer) {
+		this(tokens, sink, window, clock, quota, sanitizer, IngestionControls.permissive());
+	}
+
+	public ExportLogsService(TokenValidator tokens, LogsSink sink, TimestampWindow window, Clock clock,
+			QuotaGate<ExportLogsServiceRequest, br.com.lhamalog.collector.ingestion.otlp.domain.Scoped<io.opentelemetry.proto.logs.v1.LogRecord>> quota,
+			BatchSanitizer<ExportLogsServiceRequest, br.com.lhamalog.collector.ingestion.otlp.domain.Scoped<io.opentelemetry.proto.logs.v1.LogRecord>> sanitizer,
+			IngestionControls controls) {
 		this.tokens = tokens;
 		this.sink = sink;
 		this.window = window;
 		this.clock = clock;
 		this.quota = quota;
 		this.sanitizer = sanitizer;
+		this.controls = controls == null ? IngestionControls.permissive() : controls;
 	}
 
 	public IngestionDecision export(String bearerToken, OtlpPayload<ExportLogsServiceRequest> payload) {
@@ -56,7 +65,7 @@ public class ExportLogsService {
 				request -> LogRecordAssessment.assess(request, window, clock.instant()),
 				(tenantId, productId, request, accepted) -> sink.deliver(tenantId, productId, request, accepted),
 				"log records",
-				LogRecordAssessment.REJECTION_REASON, quota, sanitizer);
+				LogRecordAssessment.REJECTION_REASON, quota, sanitizer, controls);
 	}
 
 }

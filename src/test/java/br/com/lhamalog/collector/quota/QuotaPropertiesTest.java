@@ -12,7 +12,7 @@ class QuotaPropertiesTest {
 	@Test
 	void defaultsKeepQuotaDisabledAndE2eFaultInjectionOff() {
 		QuotaProperties quota = new QuotaProperties(false, Duration.ofSeconds(5), Duration.ofSeconds(10),
-				Duration.ofMillis(250), Duration.ofSeconds(30));
+				Duration.ofMillis(250), Duration.ofSeconds(30), Duration.ofSeconds(300), 5, Duration.ofMinutes(30));
 		QuotaE2eProperties e2e = new QuotaE2eProperties(false);
 
 		assertThat(quota.enabled()).isFalse();
@@ -20,16 +20,28 @@ class QuotaPropertiesTest {
 		assertThat(quota.refundWorkerInterval()).isEqualTo(Duration.ofSeconds(10));
 		assertThat(quota.refundBackoffInitial()).isEqualTo(Duration.ofMillis(250));
 		assertThat(quota.refundBackoffCeiling()).isEqualTo(Duration.ofSeconds(30));
+		assertThat(quota.unavailableRetryAfterSeconds()).isEqualTo(300);
+		assertThat(quota.unavailableMaxAttempts()).isEqualTo(5);
+		assertThat(quota.unavailableAttemptTtl()).isEqualTo(Duration.ofMinutes(30));
 		assertThat(e2e.enabled()).isFalse();
 	}
 
 	@Test
 	void rejectsInvalidDurationsAndBackoffCeilingBelowInitial() {
 		assertThatThrownBy(() -> new QuotaProperties(true, Duration.ZERO, Duration.ofSeconds(10), Duration.ofMillis(250),
-				Duration.ofSeconds(30))).isInstanceOf(IllegalArgumentException.class);
+				Duration.ofSeconds(30), Duration.ofSeconds(300), 5, Duration.ofMinutes(30)))
+						.isInstanceOf(IllegalArgumentException.class);
 		assertThatThrownBy(() -> new QuotaProperties(true, Duration.ofSeconds(5), Duration.ofSeconds(10),
-				Duration.ofSeconds(30), Duration.ofSeconds(10))).isInstanceOf(IllegalArgumentException.class);
+				Duration.ofSeconds(30), Duration.ofSeconds(10), Duration.ofSeconds(300), 5, Duration.ofMinutes(30)))
+						.isInstanceOf(IllegalArgumentException.class);
+		assertThatThrownBy(() -> new QuotaProperties(true, Duration.ofSeconds(5), Duration.ofSeconds(10),
+				Duration.ofMillis(250), Duration.ofSeconds(30), Duration.ofSeconds(300), 0, Duration.ofMinutes(30)))
+						.isInstanceOf(IllegalArgumentException.class);
+		assertThatThrownBy(() -> new QuotaProperties(true, Duration.ofSeconds(5), Duration.ofSeconds(10),
+				Duration.ofMillis(250), Duration.ofSeconds(30), Duration.ofSeconds(300), 5, Duration.ZERO))
+						.isInstanceOf(IllegalArgumentException.class);
 		assertThatCode(() -> new QuotaProperties(true, Duration.ofSeconds(5), Duration.ofSeconds(10),
-				Duration.ofMillis(250), Duration.ofSeconds(30))).doesNotThrowAnyException();
+				Duration.ofMillis(250), Duration.ofSeconds(30), Duration.ofSeconds(300), 5, Duration.ofMinutes(30)))
+						.doesNotThrowAnyException();
 	}
 }

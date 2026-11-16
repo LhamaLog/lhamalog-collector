@@ -19,6 +19,10 @@ import java.util.Map;
  * destination as invalid data is also 400, never 503 (T040); EmptySuccess and Accepted 200 without {@code partial_success}; PartiallyAccepted 200
  * with {@code rejected_log_records} or {@code rejected_spans} and {@code error_message}; CatalogUnavailable
  * and DestinationUnavailable 503 with {@code Retry-After}. Messages are in English.
+ *
+ * <p>LLT-183: rate limit → 429 + Retry-After from the decision; application batch too large → 413;
+ * suspended → 403; Core unavailable Retry-After from the decision (default 300 s); Core unavailable
+ * budget exhausted → 500 without Retry-After.
  */
 public final class OtlpHttpStatusMapper {
 
@@ -44,9 +48,17 @@ public final class OtlpHttpStatusMapper {
 			case IngestionDecision.DestinationUnavailable d -> unavailable(d.retryAfterSeconds(), "destination unavailable, retry later");
 			case IngestionDecision.QuotaExceeded q -> new HttpOutcome(429, Map.of("Retry-After", "120"),
 					status(Code.RESOURCE_EXHAUSTED, "ingestion quota exhausted, retry later"));
-			case IngestionDecision.QuotaUnavailable q -> unavailable(120, "ingestion quota unavailable, retry later");
+			case IngestionDecision.QuotaUnavailable q -> unavailable(q.retryAfterSeconds(), "ingestion quota unavailable, retry later");
+			case IngestionDecision.QuotaUnavailableExhausted e -> new HttpOutcome(500, Map.of(),
+					status(Code.INTERNAL, "core unavailable: retry budget exhausted, batch dropped"));
+			case IngestionDecision.RateLimited r -> new HttpOutcome(429, Map.of("Retry-After", Long.toString(r.retryAfterSeconds())),
+					status(Code.RESOURCE_EXHAUSTED, "ingestion rate limited, retry later"));
+			case IngestionDecision.BatchTooLarge b -> new HttpOutcome(413, Map.of(),
+					status(Code.RESOURCE_EXHAUSTED, "OTLP batch exceeds the application size limit"));
+			case IngestionDecision.Suspended s -> new HttpOutcome(403, Map.of(),
+					status(Code.PERMISSION_DENIED, "subscription suspended"));
 			case IngestionDecision.InvalidPayload p -> switch (p.reason()) {
-				case TOO_LARGE -> new HttpOutcome(413, Map.of(), status(Code.RESOURCE_EXHAUSTED, p.message()));
+				case TOO_LARGE, BATCH_TOO_LARGE -> new HttpOutcome(413, Map.of(), status(Code.RESOURCE_EXHAUSTED, p.message()));
 				case UNSUPPORTED_ENCODING -> new HttpOutcome(415, Map.of(), status(Code.INVALID_ARGUMENT, p.message()));
 				case MALFORMED, ALL_RECORDS_INVALID, REJECTED_BY_DESTINATION -> new HttpOutcome(400, Map.of(), status(Code.INVALID_ARGUMENT, p.message()));
 			};
