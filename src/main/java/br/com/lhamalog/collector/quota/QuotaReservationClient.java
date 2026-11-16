@@ -5,7 +5,7 @@ import br.com.lhamalog.collector.usage.domain.UsageDomain;
 /** Port for the Core reservation API. Implementations must never use Authorization. */
 public interface QuotaReservationClient {
 
-	ReservationOutcome reserve(ReservationRequest request);
+	ReservationResult reserve(ReservationRequest request);
 
 	void confirm(String reservationId);
 
@@ -27,6 +27,31 @@ public interface QuotaReservationClient {
 
 	enum ReservationOutcome {
 		AUTHORIZED, AUTHORIZED_UNLIMITED, INSUFFICIENT_BALANCE, NO_PLAN, SUSPENDED
+	}
+
+	/**
+	 * Core reservation answer. {@code retentionDays} is optional (LLT-185): null or {@code <= 0} means unknown
+	 * — the Collector must not change OpenObserve stream retention.
+	 */
+	record ReservationResult(ReservationOutcome outcome, Integer retentionDays) {
+
+		public ReservationResult {
+			if (outcome == null) {
+				throw new IllegalArgumentException("outcome is required");
+			}
+			if (retentionDays != null && retentionDays <= 0) {
+				retentionDays = null;
+			}
+		}
+
+		public static ReservationResult of(ReservationOutcome outcome) {
+			return new ReservationResult(outcome, null);
+		}
+
+		/** Known positive retention, or null when unknown. */
+		public Integer knownRetentionDays() {
+			return retentionDays;
+		}
 	}
 
 	class UnavailableException extends RuntimeException {

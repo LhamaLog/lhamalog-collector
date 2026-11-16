@@ -111,7 +111,8 @@ class ExportLogsAcceptanceTest {
 	}
 
 	private void assertStoredWithTokenIdentity(String marker, SeededProduct product) throws Exception {
-		List<JsonNode> documents = awaitDocuments(env, "logs", "body", marker);
+		String ooStream = product.logsStream();
+		List<JsonNode> documents = awaitDocuments(env, ooStream, "body", marker);
 		assertThat(documents).hasSize(1);
 		assertThat(text(documents.getFirst(), "productId")).isEqualTo(product.productId());
 		assertThat(text(documents.getFirst(), "tenantId")).isEqualTo(product.tenantId());
@@ -135,7 +136,7 @@ class ExportLogsAcceptanceTest {
 		assertThat(body.path("signal").asString()).isEqualTo("LOGS");
 		assertThat(body.path("productId").asString()).isEqualTo(product.productId());
 		JsonNode ref = body.path("openobserve");
-		assertThat(ref.path("stream").asString()).isEqualTo("logs");
+		assertThat(ref.path("stream").asString()).isEqualTo(ooStream);
 		assertThat(ref.path("recordId").asString()).isEqualTo(recordId);
 		long timestamp = Long.parseLong(text(documents.getFirst(), "_timestamp"));
 		assertThat(timestamp).isBetween(ref.path("minTimestampMicros").asLong(), ref.path("maxTimestampMicros").asLong());
@@ -143,7 +144,7 @@ class ExportLogsAcceptanceTest {
 		assertThat(body.path("criticality").asString()).isEqualTo("INFO");
 		assertThat(body.path("priority").asString()).isEqualTo("LOW");
 		assertThat(body.path("recordCount").asInt()).isEqualTo(1);
-		assertThat(OtlpAcceptanceSupport.search(env, "logs", "lhamalog_batch_id", batchId)).hasSize(1);
+		assertThat(OtlpAcceptanceSupport.search(env, ooStream, "lhamalog_batch_id", batchId)).hasSize(1);
 	}
 
 	@Test
@@ -244,10 +245,11 @@ class ExportLogsAcceptanceTest {
 		assertThat(postProtobuf(httpServer.getPort(), "/v1/logs", product.token(), body).statusCode()).isEqualTo(200);
 
 		long end = System.nanoTime() + java.time.Duration.ofSeconds(60).toNanos();
-		List<JsonNode> documents = awaitDocuments(env, "logs", "body", marker);
+		String ooStream = product.logsStream();
+		List<JsonNode> documents = awaitDocuments(env, ooStream, "body", marker);
 		while (documents.size() < 2 && System.nanoTime() < end) {
 			Thread.sleep(1000);
-			documents = OtlpAcceptanceSupport.search(env, "logs", "body", marker);
+			documents = OtlpAcceptanceSupport.search(env, ooStream, "body", marker);
 		}
 		assertThat(documents).hasSize(2);
 		assertThat(text(documents.get(0), "lhamalog_record_id")).isEqualTo(text(documents.get(1), "lhamalog_record_id"));

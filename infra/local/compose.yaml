@@ -47,6 +47,7 @@ services:
       retries: 10
 
   # Destino de logs e traces aceitos pelo receptor OTLP (ADR_168, LLT-181).
+  # LLT-185: o Collector grava em streams por tenant (prefixos logs_/traces_); retenção por plano via settings.
   # Mesma tag em src/test/java/.../TestcontainersConfiguration.java.
   # Usuario e senha root so por variavel de ambiente (infra/local/.env, nao versionado).
   openobserve:

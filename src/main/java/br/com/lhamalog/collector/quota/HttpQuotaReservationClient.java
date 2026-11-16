@@ -10,9 +10,13 @@ import java.net.http.HttpResponse;
 import java.time.Duration;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.json.JsonMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /** Synchronous Core reservation adapter. All transport ambiguity is deliberately fail-closed. */
 public final class HttpQuotaReservationClient implements QuotaReservationClient {
+
+	private static final Logger log = LoggerFactory.getLogger(HttpQuotaReservationClient.class);
 	private final HttpClient http;
 	private final URI endpoint;
 	private final CoreAuthenticationProvider authentication;
@@ -29,7 +33,7 @@ public final class HttpQuotaReservationClient implements QuotaReservationClient 
 	}
 
 	@Override
-	public ReservationOutcome reserve(ReservationRequest request) {
+	public ReservationResult reserve(ReservationRequest request) {
 		try {
 			HttpResponse<String> response = http.send(withCorrelation(HttpRequest.newBuilder(endpoint).timeout(timeout)
 					.header("Content-Type", "application/json")
@@ -37,10 +41,10 @@ public final class HttpQuotaReservationClient implements QuotaReservationClient 
 					.POST(HttpRequest.BodyPublishers.ofString(json.writeValueAsString(request)))).build(),
 					HttpResponse.BodyHandlers.ofString());
 			return switch (response.statusCode()) {
-				case 200, 201 -> parseOutcome(response.body());
+				case 200, 201 -> parseResult(response.body());
 				case 403 -> parseSuspendedOrUnavailable(response.body());
-				case 409 -> ReservationOutcome.INSUFFICIENT_BALANCE;
-				case 422 -> ReservationOutcome.NO_PLAN;
+				case 409 -> ReservationResult.of(ReservationOutcome.INSUFFICIENT_BALANCE);
+				case 422 -> ReservationResult.of(ReservationOutcome.NO_PLAN);
 				default -> throw new UnavailableException("Core reservation returned " + response.statusCode());
 			};
 		}
@@ -104,16 +108,35 @@ public final class HttpQuotaReservationClient implements QuotaReservationClient 
 	}
 
 	/**
-	 * Parses {@code outcome} from Core JSON. Extra fields such as {@code overageBytes} are ignored
-	 * (Jackson tree read); only known {@link ReservationOutcome} names are accepted.
+	 * Parses {@code outcome} and optional {@code retentionDays} from Core JSON. Extra fields such as
+	 * {@code overageBytes} are ignored; only known {@link ReservationOutcome} names are accepted.
+	 * Absent/null/{@code <=0} retentionDays means unknown (LLT-185). Non-integral (e.g. {@code 7.5}) or
+	 * out-of-range values are rejected as unknown with a WARN, never rounded: rounding up would keep data longer
+	 * than the plan and rounding down could delete data the tenant paid for.
 	 */
-	private ReservationOutcome parseOutcome(String body) {
+	private ReservationResult parseResult(String body) {
 		try {
-			String outcome = json.readTree(body).path("outcome").asString();
+			var tree = json.readTree(body);
+			String outcome = tree.path("outcome").asString();
 			if (outcome == null || outcome.isBlank()) {
 				throw new UnavailableException("Core reservation response is invalid");
 			}
-			return ReservationOutcome.valueOf(outcome);
+			Integer retentionDays = null;
+			var retentionNode = tree.path("retentionDays");
+			if (!retentionNode.isMissingNode() && !retentionNode.isNull()) {
+				if (retentionNode.isIntegralNumber() && retentionNode.canConvertToInt()) {
+					int value = retentionNode.asInt();
+					if (value > 0) {
+						retentionDays = value;
+					}
+				}
+				else {
+					log.warn(
+							"event=quota.reservation.retention_invalid | Core retentionDays is not a positive integer; treated as unknown | retentionDays={}",
+							retentionNode.toString());
+				}
+			}
+			return new ReservationResult(ReservationOutcome.valueOf(outcome), retentionDays);
 		}
 		catch (JacksonException | IllegalArgumentException exception) {
 			throw new UnavailableException("Core reservation response is invalid", exception);
@@ -124,10 +147,11 @@ public final class HttpQuotaReservationClient implements QuotaReservationClient 
 	 * Core emits HTTP 403 with {@code {"outcome":"SUSPENDED",...}} for suspended subscriptions.
 	 * Any other 403 (or unparseable body) stays fail-closed as {@link UnavailableException}.
 	 */
-	private ReservationOutcome parseSuspendedOrUnavailable(String body) {
+	private ReservationResult parseSuspendedOrUnavailable(String body) {
 		try {
-			if (ReservationOutcome.SUSPENDED == parseOutcome(body)) {
-				return ReservationOutcome.SUSPENDED;
+			ReservationResult result = parseResult(body);
+			if (ReservationOutcome.SUSPENDED == result.outcome()) {
+				return result;
 			}
 		}
 		catch (UnavailableException ignored) {

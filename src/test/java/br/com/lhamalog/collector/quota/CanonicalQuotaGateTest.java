@@ -25,9 +25,9 @@ class CanonicalQuotaGateTest {
 		List<String> refunds = new ArrayList<>();
 		QuotaReservationClient client = new QuotaReservationClient() {
 			@Override
-			public ReservationOutcome reserve(ReservationRequest request) {
+			public ReservationResult reserve(ReservationRequest request) {
 				seen.set(request);
-				return ReservationOutcome.AUTHORIZED;
+				return new ReservationResult(ReservationOutcome.AUTHORIZED, 7);
 			}
 
 			@Override
@@ -74,6 +74,7 @@ class CanonicalQuotaGateTest {
 		gate.refund(first.reservationId(), "SINK_UNAVAILABLE");
 
 		assertThat(first.outcome()).isEqualTo(QuotaGate.Reservation.Outcome.AUTHORIZED);
+		assertThat(first.retentionDays()).isEqualTo(7);
 		assertThat(first.reservationId()).isEqualTo(second.reservationId()).startsWith("quota:");
 		assertThat(seen.get().domain()).isEqualTo(UsageDomain.LOGS);
 		assertThat(seen.get().requestedBytes()).isPositive();
@@ -121,8 +122,8 @@ class CanonicalQuotaGateTest {
 			QuotaReservationClient.ReservationOutcome outcome) {
 		return new CanonicalQuotaGate<>(new QuotaReservationClient() {
 			@Override
-			public ReservationOutcome reserve(ReservationRequest request) {
-				return outcome;
+			public ReservationResult reserve(ReservationRequest request) {
+				return ReservationResult.of(outcome);
 			}
 
 			@Override

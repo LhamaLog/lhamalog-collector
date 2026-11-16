@@ -12,8 +12,8 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Traces destination: OpenObserve stream {@code traces} (configurable), replacing the old Redis sink (T032,
- * T041). Same confirmation rule as logs.
+ * Traces destination: OpenObserve stream per tenant (LLT-185), replacing the old Redis sink. Same confirmation
+ * rule as logs.
  *
  * <p>Besides ids, name and times, each document keeps {@code kind} and {@code statusCode} as OTLP enum names
  * ({@code SPAN_KIND_SERVER}, {@code STATUS_CODE_ERROR}), {@code statusMessage} when present,
@@ -24,14 +24,23 @@ public class OpenObserveTracesSink implements TracesSink, BatchStore<Span> {
 
 	private final OpenObserveClient client;
 
-	private final String stream;
+	/** Configurable prefix ({@code OPENOBSERVE_TRACES_STREAM}); stream name is {@link TenantStreamNames}. */
+	private final String streamPrefix;
 
 	private final Clock clock;
 
-	public OpenObserveTracesSink(OpenObserveClient client, String stream, Clock clock) {
+	private final StreamRetentionService retention;
+
+	public OpenObserveTracesSink(OpenObserveClient client, String streamPrefix, Clock clock) {
+		this(client, streamPrefix, clock, null);
+	}
+
+	public OpenObserveTracesSink(OpenObserveClient client, String streamPrefix, Clock clock,
+			StreamRetentionService retention) {
 		this.client = client;
-		this.stream = stream;
+		this.streamPrefix = streamPrefix;
 		this.clock = clock;
+		this.retention = retention;
 	}
 
 	@Override
@@ -41,6 +50,7 @@ public class OpenObserveTracesSink implements TracesSink, BatchStore<Span> {
 
 	@Override
 	public StoredBatch store(String tenantId, String productId, List<Scoped<Span>> acceptedSpans) {
+		String stream = TenantStreamNames.resolve(streamPrefix, tenantId);
 		if (acceptedSpans.isEmpty()) {
 			return StoredBatch.empty(Signal.TRACES, client.organization(), stream, clock.instant());
 		}
@@ -91,6 +101,9 @@ public class OpenObserveTracesSink implements TracesSink, BatchStore<Span> {
 			documents.add(doc);
 		}
 		client.ingest(stream, documents);
+		if (retention != null) {
+			retention.ensureAfterIngestAsync("traces", stream);
+		}
 		return new StoredBatch(Signal.TRACES, client.organization(), stream, batchId, recordIds, min, max,
 				receivedAt.toString());
 	}

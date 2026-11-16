@@ -152,7 +152,7 @@ class QuotaReservationRestartIntegrationTest {
 		AtomicInteger refunds = new AtomicInteger();
 		QuotaReservationClient refundClient = new QuotaReservationClient() {
 			@Override
-			public ReservationOutcome reserve(ReservationRequest request) {
+			public ReservationResult reserve(ReservationRequest request) {
 				throw new UnsupportedOperationException();
 			}
 

@@ -85,7 +85,8 @@ class OpenObserveSinkTest {
 			.addAttributes(KeyValue.newBuilder().setKey("productId").setValue(AnyValue.newBuilder().setStringValue("evil")))
 			.build();
 		new OpenObserveLogsSink(client, "logs", CLOCK).deliver("tenant-1", "product-a", List.of(Scoped.of(log)));
-		assertThat(lastPath.get()).isEqualTo("/api/lhamalog/logs/_json");
+		assertThat(lastPath.get())
+			.isEqualTo("/api/lhamalog/" + TenantStreamNames.resolve("logs", "tenant-1") + "/_json");
 		assertThat(lastAuth.get()).startsWith("Basic ");
 		JsonNode doc = first(lastBody.get());
 		assertThat(doc.get("tenantId").asString()).isEqualTo("tenant-1");
@@ -114,7 +115,7 @@ class OpenObserveSinkTest {
 		assertThat(batch.singleRecordId()).isNull();
 		assertThat(batch.signal()).isEqualTo(Signal.LOGS);
 		assertThat(batch.organization()).isEqualTo("lhamalog");
-		assertThat(batch.stream()).isEqualTo("logs");
+		assertThat(batch.stream()).isEqualTo("logs_t");
 		assertThat(batch.minTimestampMicros()).isEqualTo(1_000_000L);
 		assertThat(batch.maxTimestampMicros()).isEqualTo(5_000_000L);
 		assertThat(batch.receivedAt()).isEqualTo("2026-10-31T12:00:00Z");
@@ -154,7 +155,8 @@ class OpenObserveSinkTest {
 			.setEndTimeUnixNano(3_000_000)
 			.build();
 		new OpenObserveTracesSink(client, "traces", CLOCK).deliver("tenant-1", "product-a", List.of(Scoped.of(span)));
-		assertThat(lastPath.get()).isEqualTo("/api/lhamalog/traces/_json");
+		assertThat(lastPath.get())
+			.isEqualTo("/api/lhamalog/" + TenantStreamNames.resolve("traces", "tenant-1") + "/_json");
 		JsonNode doc = first(lastBody.get());
 		assertThat(doc.get("parentSpanId").asString()).isEqualTo("0102030405060708");
 		assertThat(doc.get("name").asString()).isEqualTo("GET /");

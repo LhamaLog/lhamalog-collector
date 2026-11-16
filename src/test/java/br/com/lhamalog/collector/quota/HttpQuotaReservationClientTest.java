@@ -42,9 +42,10 @@ class HttpQuotaReservationClientTest {
 
 	@Test
 	void reserveUsesServiceHeaderNeverAuthorizationAndMapsCreated() {
-		QuotaReservationClient.ReservationOutcome result = client(Duration.ofSeconds(1)).reserve(request());
+		QuotaReservationClient.ReservationResult result = client(Duration.ofSeconds(1)).reserve(request());
 
-		assertThat(result).isEqualTo(QuotaReservationClient.ReservationOutcome.AUTHORIZED);
+		assertThat(result.outcome()).isEqualTo(QuotaReservationClient.ReservationOutcome.AUTHORIZED);
+		assertThat(result.knownRetentionDays()).isNull();
 		assertThat(serviceToken.get()).isEqualTo("service-token");
 		assertThat(authorization.get()).isNull();
 		assertThat(correlationIdHeader.get()).isNull();
@@ -53,7 +54,7 @@ class HttpQuotaReservationClientTest {
 	@Test
 	void reserveSendsCorrelationIdWhenMdcHasValue() {
 		CorrelationId.put("outbound-cid-9");
-		assertThat(client(Duration.ofSeconds(1)).reserve(request()))
+		assertThat(client(Duration.ofSeconds(1)).reserve(request()).outcome())
 				.isEqualTo(QuotaReservationClient.ReservationOutcome.AUTHORIZED);
 		assertThat(correlationIdHeader.get()).isEqualTo("outbound-cid-9");
 	}
@@ -61,10 +62,10 @@ class HttpQuotaReservationClientTest {
 	@Test
 	void reserveMapsConflictAndUnprocessableEntity() {
 		status.set(409);
-		assertThat(client(Duration.ofSeconds(1)).reserve(request()))
+		assertThat(client(Duration.ofSeconds(1)).reserve(request()).outcome())
 				.isEqualTo(QuotaReservationClient.ReservationOutcome.INSUFFICIENT_BALANCE);
 		status.set(422);
-		assertThat(client(Duration.ofSeconds(1)).reserve(request()))
+		assertThat(client(Duration.ofSeconds(1)).reserve(request()).outcome())
 				.isEqualTo(QuotaReservationClient.ReservationOutcome.NO_PLAN);
 	}
 
@@ -72,7 +73,7 @@ class HttpQuotaReservationClientTest {
 	void reserveMaps403SuspendedBodyToSuspendedNotUnavailable() {
 		status.set(403);
 		responseBody.set("{\"outcome\":\"SUSPENDED\",\"reservationId\":null,\"expiresAt\":null}");
-		assertThat(client(Duration.ofSeconds(1)).reserve(request()))
+		assertThat(client(Duration.ofSeconds(1)).reserve(request()).outcome())
 				.isEqualTo(QuotaReservationClient.ReservationOutcome.SUSPENDED);
 	}
 
@@ -92,8 +93,28 @@ class HttpQuotaReservationClientTest {
 		status.set(201);
 		responseBody.set(
 				"{\"outcome\":\"AUTHORIZED\",\"reservationId\":\"r1\",\"expiresAt\":\"2026-11-16T12:00:00Z\",\"overageBytes\":42}");
-		assertThat(client(Duration.ofSeconds(1)).reserve(request()))
+		assertThat(client(Duration.ofSeconds(1)).reserve(request()).outcome())
 				.isEqualTo(QuotaReservationClient.ReservationOutcome.AUTHORIZED);
+	}
+
+	@Test
+	void reserveParsesRetentionDaysAndTreatsNonPositiveAsUnknown() {
+		status.set(201);
+		responseBody.set("{\"outcome\":\"AUTHORIZED\",\"retentionDays\":30}");
+		assertThat(client(Duration.ofSeconds(1)).reserve(request()).knownRetentionDays()).isEqualTo(30);
+		responseBody.set("{\"outcome\":\"AUTHORIZED\",\"retentionDays\":0}");
+		assertThat(client(Duration.ofSeconds(1)).reserve(request()).knownRetentionDays()).isNull();
+		responseBody.set("{\"outcome\":\"AUTHORIZED\",\"retentionDays\":null}");
+		assertThat(client(Duration.ofSeconds(1)).reserve(request()).knownRetentionDays()).isNull();
+	}
+
+	@Test
+	void reserveRejectsNonIntegralOrOutOfRangeRetentionDaysAsUnknown() {
+		status.set(201);
+		for (String value : new String[] { "7.5", "7.0", "\"30\"", "10000000000", "-7" }) {
+			responseBody.set("{\"outcome\":\"AUTHORIZED\",\"retentionDays\":" + value + "}");
+			assertThat(client(Duration.ofSeconds(1)).reserve(request()).knownRetentionDays()).as(value).isNull();
+		}
 	}
 
 	@Test
