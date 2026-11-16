@@ -78,7 +78,7 @@ public class OtlpGrpcServer implements SmartLifecycle {
 			server = null;
 			throw new UncheckedIOException("cannot bind OTLP/gRPC on " + host + ":" + port, ex);
 		}
-		log.info("OTLP/gRPC receiver listening on {}:{}", host, getPort());
+		log.info("event=otlp.grpc.started | OTLP/gRPC receiver listening on {}:{}", host, getPort());
 	}
 
 	@Override
@@ -95,7 +95,7 @@ public class OtlpGrpcServer implements SmartLifecycle {
 				Thread.currentThread().interrupt();
 			}
 			server = null;
-			log.info("OTLP/gRPC receiver stopped");
+			log.info("event=otlp.grpc.stopped | OTLP/gRPC receiver stopped");
 		}
 	}
 

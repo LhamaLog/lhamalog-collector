@@ -193,8 +193,9 @@ final class BatchIngestion {
 				refundQuietly(quota, reservationId, "SINK_UNAVAILABLE");
 			}
 			// The successful confirm intentionally remains durable; the refund outbox compensates this case.
-			log.warn("Destination did not confirm {} {} of product {}: {}", batch.valid().size(), recordName,
-					valid.productId(), ex.getMessage());
+			log.warn(
+					"event=ingestion.destination.not_confirmed | Destination did not confirm {} {} of product {}: {}",
+					batch.valid().size(), recordName, valid.productId(), ex.getMessage());
 			return new IngestionDecision.DestinationUnavailable(postDebitRetryAfter(reservationId, ex.retryAfterSeconds()));
 		}
 		catch (SinkRejectedException ex) {
@@ -204,8 +205,9 @@ final class BatchIngestion {
 			if (ex.acceptedCount() == 0) {
 				refundQuietly(quota, reservationId, "SINK_REJECTED");
 			}
-			log.warn("Destination refused {} of {} {} of product {} as invalid data: {}", ex.rejectedCount(),
-					batch.valid().size(), recordName, valid.productId(), ex.getMessage());
+			log.warn(
+					"event=ingestion.destination.refused | Destination refused {} of {} {} of product {} as invalid data: {}",
+					ex.rejectedCount(), batch.valid().size(), recordName, valid.productId(), ex.getMessage());
 			int rejected = batch.rejectedCount() + ex.rejectedCount();
 			String message = describeRejections(batch.rejectedCount(), ex.rejectedCount(), recordName, rejectionReason);
 			if (ex.acceptedCount() == 0) {
@@ -218,8 +220,8 @@ final class BatchIngestion {
 		catch (RuntimeException ex) {
 			postDebitFailure(quota);
 			refundQuietly(quota, reservationId, "SINK_FAILURE");
-			log.warn("Destination failed while delivering {} {} of product {}", batch.valid().size(), recordName,
-					valid.productId(), ex);
+			log.warn("event=ingestion.destination.failed | Destination failed while delivering {} {} of product {}",
+					batch.valid().size(), recordName, valid.productId(), ex);
 			return new IngestionDecision.DestinationUnavailable(
 					postDebitRetryAfter(reservationId, SinkUnavailableException.DEFAULT_RETRY_AFTER_SECONDS));
 		}
@@ -291,7 +293,8 @@ final class BatchIngestion {
 			quota.release(reservationId);
 		}
 		catch (RuntimeException releaseFailure) {
-			log.warn("Could not release failed reservation {}", reservationId, releaseFailure);
+			log.warn("event=quota.reservation.release_failed | Could not release failed reservation {}", reservationId,
+					releaseFailure);
 		}
 	}
 
@@ -303,7 +306,8 @@ final class BatchIngestion {
 			quota.refund(reservationId, reason);
 		}
 		catch (RuntimeException enqueueFailure) {
-			log.error("Could not enqueue refund for confirmed reservation {}", reservationId, enqueueFailure);
+			log.error("event=quota.refund.enqueue_failed | Could not enqueue refund for confirmed reservation {}",
+					reservationId, enqueueFailure);
 		}
 	}
 

@@ -3,6 +3,7 @@ package br.com.lhamalog.collector.usage.core;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import br.com.lhamalog.collector.config.UsageProperties;
+import br.com.lhamalog.collector.logging.CorrelationId;
 import br.com.lhamalog.collector.usage.domain.UsageDomain;
 import br.com.lhamalog.collector.usage.domain.UsageFact;
 import br.com.lhamalog.collector.usage.outbox.UsageOutboxItem;
@@ -12,15 +13,35 @@ import java.io.IOException;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.slf4j.MDC;
 
 class UsageOutboxWorkerTest {
 
 	private static final Instant NOW = Instant.parse("2026-11-09T00:00:00Z");
 	private static final Clock CLOCK = Clock.fixed(NOW, ZoneOffset.UTC);
+
+	@AfterEach
+	void clearMdc() {
+		MDC.clear();
+	}
+
+	@Test
+	void setsAndClearsCorrelationIdWhileDelivering() {
+		AtomicReference<String> seenDuringSend = new AtomicReference<>();
+		FakeOutbox outbox = new FakeOutbox(accepted());
+		new UsageOutboxWorker(outbox, fact -> {
+			seenDuringSend.set(CorrelationId.current());
+			return 201;
+		}, properties(), CLOCK, "worker").runOnce();
+
+		assertThat(CorrelationId.isValid(seenDuringSend.get())).isTrue();
+		assertThat(CorrelationId.current()).isNull();
+	}
 
 	@Test
 	void marksAcceptedFactSyncedOnlyAfterA2xxResponse() {

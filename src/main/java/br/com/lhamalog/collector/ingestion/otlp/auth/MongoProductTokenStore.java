@@ -126,7 +126,8 @@ public class MongoProductTokenStore implements TokenValidator {
 			result = lookup(hash);
 		}
 		catch (RuntimeException ex) {
-			log.warn("Token catalog unavailable: {}", ex.getClass().getSimpleName());
+			log.warn("event=auth.token_catalog.unavailable | Token catalog unavailable: {}",
+					ex.getClass().getSimpleName());
 			return new TokenValidationResult.CatalogUnavailable(ex);
 		}
 		if (result instanceof TokenValidationResult.Valid) {

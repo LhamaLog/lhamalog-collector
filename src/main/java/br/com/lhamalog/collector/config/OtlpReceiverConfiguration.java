@@ -197,7 +197,7 @@ public class OtlpReceiverConfiguration {
 		scheduler.setPoolSize(1);
 		scheduler.setThreadNamePrefix("quota-refund-");
 		scheduler.setErrorHandler(error -> org.slf4j.LoggerFactory.getLogger(RefundOutboxWorker.class)
-				.warn("Quota refund scheduler iteration failed", error));
+				.warn("event=quota.refund.scheduler_failed | Quota refund scheduler iteration failed", error));
 		scheduler.initialize();
 		scheduler.scheduleWithFixedDelay(worker::runOnce, properties.refundWorkerInterval());
 		return scheduler;
@@ -218,7 +218,7 @@ public class OtlpReceiverConfiguration {
 		scheduler.setPoolSize(1);
 		scheduler.setThreadNamePrefix("usage-outbox-");
 		scheduler.setErrorHandler(error -> org.slf4j.LoggerFactory.getLogger(UsageOutboxWorker.class)
-				.warn("Usage outbox scheduler iteration failed", error));
+				.warn("event=usage.outbox.scheduler_failed | Usage outbox scheduler iteration failed", error));
 		scheduler.initialize();
 		scheduler.scheduleWithFixedDelay(worker::runOnce, properties.workerInterval());
 		return scheduler;

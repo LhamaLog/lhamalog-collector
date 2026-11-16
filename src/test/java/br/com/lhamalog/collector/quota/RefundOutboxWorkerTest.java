@@ -2,16 +2,44 @@ package br.com.lhamalog.collector.quota;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import br.com.lhamalog.collector.logging.CorrelationId;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.slf4j.MDC;
 
 class RefundOutboxWorkerTest {
 	private static final Instant NOW = Instant.parse("2026-01-01T00:00:00Z");
+
+	@AfterEach
+	void clearMdc() {
+		MDC.clear();
+	}
+
+	@Test
+	void setsAndClearsCorrelationIdWhileDelivering() {
+		AtomicReference<String> seenDuringRefund = new AtomicReference<>();
+		InMemoryOutbox outbox = new InMemoryOutbox();
+		outbox.enqueue("r-cid", "sink", NOW);
+		new RefundOutboxWorker(outbox, new QuotaReservationClient() {
+			@Override public ReservationOutcome reserve(ReservationRequest request) { throw new UnsupportedOperationException(); }
+			@Override public void confirm(String reservationId) { }
+			@Override public void release(String reservationId) { }
+			@Override public int refund(String reservationId) {
+				seenDuringRefund.set(CorrelationId.current());
+				return 200;
+			}
+		}, properties(), Clock.fixed(NOW, ZoneOffset.UTC)).runOnce();
+
+		assertThat(CorrelationId.isValid(seenDuringRefund.get())).isTrue();
+		assertThat(CorrelationId.current()).isNull();
+	}
 
 	@Test
 	void duplicateReservationIdEnqueuesOnlyOneRefund() {

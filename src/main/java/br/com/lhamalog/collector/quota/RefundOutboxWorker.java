@@ -1,5 +1,6 @@
 package br.com.lhamalog.collector.quota;
 
+import br.com.lhamalog.collector.logging.CorrelationId;
 import java.time.Clock;
 import java.time.Instant;
 import org.slf4j.Logger;
@@ -38,6 +39,7 @@ public final class RefundOutboxWorker {
 	}
 
 	private void deliver(RefundOutboxItem item, Instant now) {
+		CorrelationId.put(CorrelationId.newId());
 		try {
 			int status = client.refund(item.reservationId());
 			if ((status >= 200 && status < 300) || status == 409) {
@@ -55,12 +57,15 @@ public final class RefundOutboxWorker {
 		catch (RuntimeException exception) {
 			retry(item, now, "NETWORK");
 		}
+		finally {
+			CorrelationId.clear();
+		}
 	}
 
 	private void retry(RefundOutboxItem item, Instant now, String code) {
 		outbox.replace(item, item.retry(now, nextRetryAt(item, now), code));
 		observability.refundRetry();
-		log.warn("Refund for reservation {} deferred ({})", item.reservationId(), code);
+		log.warn("event=quota.refund.deferred | Refund for reservation {} deferred ({})", item.reservationId(), code);
 	}
 
 	Instant nextRetryAt(RefundOutboxItem item, Instant now) {

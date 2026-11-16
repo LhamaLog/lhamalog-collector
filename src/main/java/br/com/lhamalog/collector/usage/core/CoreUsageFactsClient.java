@@ -34,7 +34,7 @@ public final class CoreUsageFactsClient implements UsageFactsClient {
 		this.endpoint = coreUrl.resolve("/internal/usage-facts");
 		this.authentication = authentication;
 		this.json = json;
-		log.info("Core usage-facts client endpoint={}", this.endpoint);
+		log.info("event=usage.core.client_ready | Core usage-facts client endpoint={}", this.endpoint);
 	}
 
 	@Override

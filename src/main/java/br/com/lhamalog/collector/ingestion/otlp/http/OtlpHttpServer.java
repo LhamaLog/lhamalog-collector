@@ -146,8 +146,8 @@ public class OtlpHttpServer implements SmartLifecycle {
 		server.setExecutor(executor);
 		server.createContext("/", this::handle);
 		server.start();
-		log.info("OTLP/HTTP receiver listening on {}:{} (max concurrent requests {}, {})", host, getPort(),
-				limits.maxConcurrentRequests(), effective);
+		log.info("event=otlp.http.started | OTLP/HTTP receiver listening on {}:{} (max concurrent requests {}, {})",
+				host, getPort(), limits.maxConcurrentRequests(), effective);
 	}
 
 	@Override
@@ -156,7 +156,7 @@ public class OtlpHttpServer implements SmartLifecycle {
 			server.stop(1);
 			executor.close();
 			server = null;
-			log.info("OTLP/HTTP receiver stopped");
+			log.info("event=otlp.http.stopped | OTLP/HTTP receiver stopped");
 		}
 	}
 
@@ -223,7 +223,7 @@ public class OtlpHttpServer implements SmartLifecycle {
 			write(exchange, OtlpHttpStatusMapper.map(decision, signal), responseType);
 		}
 		catch (RuntimeException ex) {
-			log.error("Unexpected failure in OTLP/HTTP receiver", ex);
+			log.error("event=otlp.http.unexpected_failure | Unexpected failure in OTLP/HTTP receiver", ex);
 			throw ex;
 		}
 	}
