@@ -70,7 +70,7 @@ public final class UsageOutboxObservability {
 		pendingAgeSeconds.set((long) age);
 		if (age > grace.toSeconds()) {
 			Counter.builder("lhamalog.usage.outbox.pending.over_grace").register(meters).increment();
-			log.warn("Usage outbox pending item exceeded liveness grace");
+			log.warn("event=usage.outbox.pending_over_grace | Usage outbox pending item exceeded liveness grace");
 		}
 	}
 
@@ -79,7 +79,7 @@ public final class UsageOutboxObservability {
 			return;
 		}
 		Counter.builder("lhamalog.usage.outbox.ambiguous").register(meters).increment();
-		log.error("Usage outbox contains ambiguous Redis acceptance evidence");
+		log.error("event=usage.outbox.ambiguous | Usage outbox contains ambiguous Redis acceptance evidence");
 	}
 
 	public void evidenceExpiryConfigured(Duration ttl) {

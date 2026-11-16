@@ -4,11 +4,14 @@ package br.com.lhamalog.collector.ingestion.otlp.grpc;
 import br.com.lhamalog.collector.ingestion.otlp.application.ExportLogsService;
 import br.com.lhamalog.collector.ingestion.otlp.application.ExportTracesService;
 import br.com.lhamalog.collector.ingestion.otlp.domain.IngestionDecision;
-import io.grpc.Metadata;
+import com.google.protobuf.Any;
+import com.google.protobuf.Duration;
+import com.google.rpc.RetryInfo;
 import io.grpc.Server;
 import io.grpc.ServerInterceptors;
 import io.grpc.Status;
 import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
+import io.grpc.protobuf.StatusProto;
 import io.grpc.stub.StreamObserver;
 import io.opentelemetry.proto.collector.logs.v1.ExportLogsPartialSuccess;
 import io.opentelemetry.proto.collector.logs.v1.ExportLogsServiceRequest;
@@ -33,7 +36,8 @@ import org.springframework.context.SmartLifecycle;
  *
  * <p>Status: OK (with {@code partial_success} when records were rejected), UNAUTHENTICATED,
  * INVALID_ARGUMENT, RESOURCE_EXHAUSTED without {@code RetryInfo} (message above the limit, enforced by
- * Netty), and UNAVAILABLE when the catalog or the destination did not confirm.
+ * Netty), and UNAVAILABLE when the catalog or the destination did not confirm. Throttling / quota
+ * refusals attach {@link RetryInfo} in {@code google.rpc.Status} details ({@code grpc-status-details-bin}).
  */
 public class OtlpGrpcServer implements SmartLifecycle {
 
@@ -65,11 +69,12 @@ public class OtlpGrpcServer implements SmartLifecycle {
 			return;
 		}
 		BearerTokenInterceptor auth = new BearerTokenInterceptor();
+		CorrelationIdServerInterceptor correlation = new CorrelationIdServerInterceptor();
 		try {
 			server = NettyServerBuilder.forAddress(new InetSocketAddress(host, port))
 				.maxInboundMessageSize(maxMessageBytes)
-				.addService(ServerInterceptors.intercept(new LogsEndpoint(), auth))
-				.addService(ServerInterceptors.intercept(new TracesEndpoint(), auth))
+				.addService(ServerInterceptors.intercept(new LogsEndpoint(), correlation, auth))
+				.addService(ServerInterceptors.intercept(new TracesEndpoint(), correlation, auth))
 				.build()
 				.start();
 		}
@@ -77,7 +82,7 @@ public class OtlpGrpcServer implements SmartLifecycle {
 			server = null;
 			throw new UncheckedIOException("cannot bind OTLP/gRPC on " + host + ":" + port, ex);
 		}
-		log.info("OTLP/gRPC receiver listening on {}:{}", host, getPort());
+		log.info("event=otlp.grpc.started | OTLP/gRPC receiver listening on {}:{}", host, getPort());
 	}
 
 	@Override
@@ -94,7 +99,7 @@ public class OtlpGrpcServer implements SmartLifecycle {
 				Thread.currentThread().interrupt();
 			}
 			server = null;
-			log.info("OTLP/gRPC receiver stopped");
+			log.info("event=otlp.grpc.stopped | OTLP/gRPC receiver stopped");
 		}
 	}
 
@@ -115,7 +120,13 @@ public class OtlpGrpcServer implements SmartLifecycle {
 			case IngestionDecision.DestinationUnavailable d -> Status.UNAVAILABLE.withDescription("destination unavailable, retry later");
 			case IngestionDecision.QuotaExceeded q -> Status.RESOURCE_EXHAUSTED.withDescription("ingestion quota exhausted, retry later");
 			case IngestionDecision.QuotaUnavailable q -> Status.UNAVAILABLE.withDescription("ingestion quota unavailable, retry later");
+			case IngestionDecision.QuotaUnavailableExhausted e -> Status.INTERNAL
+					.withDescription("core unavailable: retry budget exhausted, batch dropped");
+			case IngestionDecision.RateLimited r -> Status.RESOURCE_EXHAUSTED.withDescription("ingestion rate limited, retry later");
+			case IngestionDecision.BatchTooLarge b -> Status.RESOURCE_EXHAUSTED.withDescription("OTLP batch exceeds the application size limit");
+			case IngestionDecision.Suspended s -> Status.PERMISSION_DENIED.withDescription("subscription suspended");
 			case IngestionDecision.InvalidPayload p -> p.reason() == IngestionDecision.Reason.TOO_LARGE
+					|| p.reason() == IngestionDecision.Reason.BATCH_TOO_LARGE
 					? Status.RESOURCE_EXHAUSTED.withDescription(p.message()) : Status.INVALID_ARGUMENT.withDescription(p.message());
 			case IngestionDecision.EmptySuccess e -> null;
 			case IngestionDecision.Accepted a -> null;
@@ -123,26 +134,41 @@ public class OtlpGrpcServer implements SmartLifecycle {
 		};
 	}
 
-	private static final Metadata.Key<String> RETRY_AFTER = Metadata.Key.of("retry-after",
-			Metadata.ASCII_STRING_MARSHALLER);
-
 	private static <A> void reply(IngestionDecision decision, StreamObserver<A> observer, A ok,
 			Function<IngestionDecision.PartiallyAccepted, A> partial) {
 		Status failure = failureStatus(decision);
 		if (failure != null) {
-			if (decision instanceof IngestionDecision.QuotaExceeded
-					|| decision instanceof IngestionDecision.QuotaUnavailable) {
-				Metadata trailers = new Metadata();
-				trailers.put(RETRY_AFTER, "120");
-				observer.onError(failure.asRuntimeException(trailers));
-			}
-			else {
-				observer.onError(failure.asRuntimeException());
-			}
+			observer.onError(asFailure(failure, retryAfterSeconds(decision)));
 			return;
 		}
 		observer.onNext(decision instanceof IngestionDecision.PartiallyAccepted p ? partial.apply(p) : ok);
 		observer.onCompleted();
+	}
+
+	/**
+	 * Builds a status runtime exception with optional {@link RetryInfo} in
+	 * {@code grpc-status-details-bin} (no custom {@code retry-after} trailer).
+	 */
+	static RuntimeException asFailure(Status status, Long retryAfterSeconds) {
+		com.google.rpc.Status.Builder rpc = com.google.rpc.Status.newBuilder()
+				.setCode(status.getCode().value())
+				.setMessage(status.getDescription() == null ? "" : status.getDescription());
+		if (retryAfterSeconds != null) {
+			rpc.addDetails(Any.pack(RetryInfo.newBuilder()
+					.setRetryDelay(Duration.newBuilder().setSeconds(retryAfterSeconds).build())
+					.build()));
+		}
+		return StatusProto.toStatusRuntimeException(rpc.build());
+	}
+
+	/** Seconds for {@link RetryInfo} when the decision previously used the {@code retry-after} trailer. */
+	private static Long retryAfterSeconds(IngestionDecision decision) {
+		return switch (decision) {
+			case IngestionDecision.QuotaExceeded q -> 120L;
+			case IngestionDecision.QuotaUnavailable q -> q.retryAfterSeconds();
+			case IngestionDecision.RateLimited r -> r.retryAfterSeconds();
+			default -> null;
+		};
 	}
 
 	private final class LogsEndpoint extends LogsServiceGrpc.LogsServiceImplBase {

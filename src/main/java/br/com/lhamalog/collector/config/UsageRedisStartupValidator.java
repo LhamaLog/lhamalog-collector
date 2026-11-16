@@ -30,7 +30,8 @@ final class UsageRedisStartupValidator implements SmartInitializingSingleton {
 
 		Properties persistence = info("persistence");
 		if ("0".equals(persistence.getProperty("aof_enabled"))) {
-			log.warn("Redis AOF is disabled while lhamalog.usage.enabled=true; usage evidence may be lost after acknowledgement");
+			log.warn(
+					"event=usage.redis.aof_disabled | Redis AOF is disabled while lhamalog.usage.enabled=true; usage evidence may be lost after acknowledgement");
 		}
 	}
 

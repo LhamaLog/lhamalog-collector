@@ -3,6 +3,11 @@
 O modelo do stream principal permanece o de `specs/002-tenant-product-logs/data-model.md`. Este documento
 acrescenta só a política de retry e a entrada da DLQ.
 
+**Nota (LLT-183 / T050):** `metadata.correlationId` deixa de ser um UUID aleatório por publicação e passa a
+ser o correlation id da requisição OTLP (string opaca até 64 caracteres). Sem campo novo; `schemaVersion`
+permanece 1; consumidores **MUST** deduplicar por `idempotencyId`, nunca por `correlationId`. Contrato
+Finder: `specs/007-plan-rate-and-size-limits/contracts/stream-correlation-id.md`.
+
 ## Política de retry (configuração)
 
 | Campo | Padrão | Variável |

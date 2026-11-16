@@ -43,8 +43,11 @@ public sealed interface IngestionDecision {
 		/** Content type or content encoding not supported by the receiver. */
 		UNSUPPORTED_ENCODING,
 
-		/** Decompressed body or gRPC message above the configured limit. */
+		/** Decompressed body or gRPC message above the transport limit ({@code max-message-size}). */
 		TOO_LARGE,
+
+		/** Decompressed body or decoded message above the application batch limit ({@code max-batch-size}). */
+		BATCH_TOO_LARGE,
 
 		/** Well formed batch in which every record is invalid. */
 		ALL_RECORDS_INVALID,
@@ -88,8 +91,50 @@ public sealed interface IngestionDecision {
 	record QuotaExceeded() implements IngestionDecision {
 	}
 
-	/** Core cannot identify an active paid allowance, or cannot be reached safely. */
-	record QuotaUnavailable() implements IngestionDecision {
+	/**
+	 * Core cannot identify an active paid allowance, or cannot be reached safely.
+	 *
+	 * @param retryAfterSeconds value for HTTP {@code Retry-After} / gRPC {@code RetryInfo} (LLT-183 default 300)
+	 */
+	record QuotaUnavailable(long retryAfterSeconds) implements IngestionDecision {
+		public QuotaUnavailable {
+			if (retryAfterSeconds < 0) {
+				throw new IllegalArgumentException("retryAfterSeconds must not be negative");
+			}
+		}
+	}
+
+	/**
+	 * Core-unavailable retry budget exhausted for this batch (LLT-183 D4): non-retryable drop.
+	 * Maps to HTTP 500 / gRPC INTERNAL without Retry-After.
+	 */
+	record QuotaUnavailableExhausted() implements IngestionDecision {
+	}
+
+	/**
+	 * Tenant exceeded the per-second OTLP request rate, or is temporarily blocked after repeated
+	 * violations (LLT-183 D5).
+	 *
+	 * @param retryAfterSeconds {@code lhamalog.rate-limit.retry-after} (default 5) or
+	 *        {@code block-retry-after} (default 300) when blocked
+	 */
+	record RateLimited(long retryAfterSeconds) implements IngestionDecision {
+		public RateLimited {
+			if (retryAfterSeconds < 0) {
+				throw new IllegalArgumentException("retryAfterSeconds must not be negative");
+			}
+		}
+	}
+
+	/** Decoded/decompressed batch above {@code lhamalog.otlp.max-batch-size} (LLT-183). */
+	record BatchTooLarge() implements IngestionDecision {
+	}
+
+	/**
+	 * Subscription is suspended (Core {@code SUSPENDED}); variant reserved for mapping without Core client
+	 * wiring in this phase.
+	 */
+	record Suspended() implements IngestionDecision {
 	}
 
 }

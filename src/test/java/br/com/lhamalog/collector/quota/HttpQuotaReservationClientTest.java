@@ -3,6 +3,7 @@ package br.com.lhamalog.collector.quota;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import br.com.lhamalog.collector.logging.CorrelationId;
 import br.com.lhamalog.collector.usage.core.CoreAuthenticationProvider;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
@@ -20,8 +21,10 @@ import tools.jackson.databind.json.JsonMapper;
 class HttpQuotaReservationClientTest {
 	private HttpServer server;
 	private final AtomicInteger status = new AtomicInteger(201);
+	private final AtomicReference<String> responseBody = new AtomicReference<>("{\"outcome\":\"AUTHORIZED\"}");
 	private final AtomicReference<String> serviceToken = new AtomicReference<>();
 	private final AtomicReference<String> authorization = new AtomicReference<>();
+	private final AtomicReference<String> correlationIdHeader = new AtomicReference<>();
 	private volatile long responseDelayMillis;
 
 	@BeforeEach
@@ -33,6 +36,7 @@ class HttpQuotaReservationClientTest {
 
 	@AfterEach
 	void stop() {
+		CorrelationId.clear();
 		server.stop(0);
 	}
 
@@ -43,6 +47,15 @@ class HttpQuotaReservationClientTest {
 		assertThat(result).isEqualTo(QuotaReservationClient.ReservationOutcome.AUTHORIZED);
 		assertThat(serviceToken.get()).isEqualTo("service-token");
 		assertThat(authorization.get()).isNull();
+		assertThat(correlationIdHeader.get()).isNull();
+	}
+
+	@Test
+	void reserveSendsCorrelationIdWhenMdcHasValue() {
+		CorrelationId.put("outbound-cid-9");
+		assertThat(client(Duration.ofSeconds(1)).reserve(request()))
+				.isEqualTo(QuotaReservationClient.ReservationOutcome.AUTHORIZED);
+		assertThat(correlationIdHeader.get()).isEqualTo("outbound-cid-9");
 	}
 
 	@Test
@@ -53,6 +66,34 @@ class HttpQuotaReservationClientTest {
 		status.set(422);
 		assertThat(client(Duration.ofSeconds(1)).reserve(request()))
 				.isEqualTo(QuotaReservationClient.ReservationOutcome.NO_PLAN);
+	}
+
+	@Test
+	void reserveMaps403SuspendedBodyToSuspendedNotUnavailable() {
+		status.set(403);
+		responseBody.set("{\"outcome\":\"SUSPENDED\",\"reservationId\":null,\"expiresAt\":null}");
+		assertThat(client(Duration.ofSeconds(1)).reserve(request()))
+				.isEqualTo(QuotaReservationClient.ReservationOutcome.SUSPENDED);
+	}
+
+	@Test
+	void reserveTreats403WithoutSuspendedOutcomeAsUnavailable() {
+		status.set(403);
+		responseBody.set("{\"error\":\"forbidden\"}");
+		assertThatThrownBy(() -> client(Duration.ofSeconds(1)).reserve(request()))
+				.isInstanceOf(QuotaReservationClient.UnavailableException.class);
+		responseBody.set("{\"outcome\":\"INSUFFICIENT_BALANCE\"}");
+		assertThatThrownBy(() -> client(Duration.ofSeconds(1)).reserve(request()))
+				.isInstanceOf(QuotaReservationClient.UnavailableException.class);
+	}
+
+	@Test
+	void reserveAuthorizedWithOverageBytesIgnoresExtraField() {
+		status.set(201);
+		responseBody.set(
+				"{\"outcome\":\"AUTHORIZED\",\"reservationId\":\"r1\",\"expiresAt\":\"2026-11-16T12:00:00Z\",\"overageBytes\":42}");
+		assertThat(client(Duration.ofSeconds(1)).reserve(request()))
+				.isEqualTo(QuotaReservationClient.ReservationOutcome.AUTHORIZED);
 	}
 
 	@Test
@@ -108,6 +149,7 @@ class HttpQuotaReservationClientTest {
 	private void respond(HttpExchange exchange) throws java.io.IOException {
 		serviceToken.set(exchange.getRequestHeaders().getFirst("X-LhamaLog-Service-Token"));
 		authorization.set(exchange.getRequestHeaders().getFirst("Authorization"));
+		correlationIdHeader.set(exchange.getRequestHeaders().getFirst(CorrelationId.HEADER));
 		if (responseDelayMillis > 0) {
 			try {
 				Thread.sleep(responseDelayMillis);
@@ -117,7 +159,7 @@ class HttpQuotaReservationClientTest {
 			}
 		}
 		byte[] body = exchange.getRequestURI().getPath().endsWith("/refund") ? new byte[0]
-				: "{\"outcome\":\"AUTHORIZED\"}".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+				: responseBody.get().getBytes(java.nio.charset.StandardCharsets.UTF_8);
 		exchange.sendResponseHeaders(status.get(), body.length);
 		exchange.getResponseBody().write(body);
 		exchange.close();

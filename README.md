@@ -154,7 +154,7 @@ No local as portas são 4328/4327 porque 4318/4317 já são do OpenTelemetry Col
 
 **Servidor HTTP:** o OTLP/HTTP usa o servidor HTTP do JDK, com limites: até 200 requisições simultâneas (`OTLP_RECEIVER_HTTP_MAX_CONCURRENT_REQUESTS`; acima disso, 503 + `Retry-After: 1`), 1000 conexões (`OTLP_RECEIVER_HTTP_MAX_CONNECTIONS`), 30 s para ler a requisição e escrever a resposta (`OTLP_RECEIVER_HTTP_READ_TIMEOUT` / `OTLP_RECEIVER_HTTP_WRITE_TIMEOUT`), 30 s de conexão ociosa (`OTLP_RECEIVER_HTTP_IDLE_TIMEOUT`) e 200 conexões ociosas (`OTLP_RECEIVER_HTTP_MAX_IDLE_CONNECTIONS`). Esses tempos viram propriedades `sun.net.httpserver.*`, que valem para a JVM inteira; um `-Dsun.net.httpserver...` passado na linha de comando tem prioridade. Em produção, **coloque um proxy reverso** (nginx, Traefik ou o balanceador da nuvem) na frente da porta 4318, com TLS, limite de corpo e de taxa; o servidor do JDK não deve ficar exposto direto na internet. `OTLP_RECEIVER_MAX_MESSAGE_SIZE` precisa ser maior que 0 e no máximo 2147483647 bytes, senão o serviço não sobe.
 
-**Redis Stream (LLT-182):** depois que o lote passa pela autenticação, pela validação e é gravado no OpenObserve, o collector publica **uma referência por lote** (não o conteúdo dos logs) para a Varredura: logs em `lhamalog:stream:logs` (evento `log.ingested`, `schemaVersion` 1) e traces em `lhamalog:stream:traces` (evento `trace.ingested`, `schemaVersion` 1), com `XADD` e `MAXLEN ~` (padrão 100000 via `LHAMALOG_MESSAGING_STREAM_LOGS_MAX_LEN` e `LHAMALOG_MESSAGING_STREAM_TRACES_MAX_LEN`). Os atributos OTel ficam no OpenObserve; cada documento leva `lhamalog_batch_id` e `lhamalog_record_id`, e a referência traz organização, stream, `batchId` e a faixa de `_timestamp` para o Finder carregar o lote. O `tenantId` vai só nos metadados do envelope; prioridade e criticidade vêm só da severidade. Lote sem token válido, inválido ou vazio nunca chega ao stream. O `idempotencyId` é o `batchId` do lote, determinístico: o reenvio do mesmo lote repete o id e a Varredura deduplica por lote. Contrato em `specs/002-tenant-product-logs/contracts/log-ingested-stream.md`. No ambiente local o Redis exige senha: defina `REDIS_PASSWORD` em `infra/local/.env`.
+**Redis Stream (LLT-182):** depois que o lote passa pela autenticação, pela validação e é gravado no OpenObserve, o collector publica **uma referência por lote** (não o conteúdo dos logs) para a Varredura: logs em `lhamalog:stream:logs` (evento `log.ingested`, `schemaVersion` 1) e traces em `lhamalog:stream:traces` (evento `trace.ingested`, `schemaVersion` 1), com `XADD` e `MAXLEN ~` (padrão 100000 via `LHAMALOG_MESSAGING_STREAM_LOGS_MAX_LEN` e `LHAMALOG_MESSAGING_STREAM_TRACES_MAX_LEN`). Os atributos OTel ficam no OpenObserve; cada documento leva `lhamalog_batch_id` e `lhamalog_record_id`, e a referência traz organização, stream, `batchId` e a faixa de `_timestamp` para o Finder carregar o lote. O `tenantId` vai só nos metadados do envelope; prioridade e criticidade vêm só da severidade. Lote sem token válido, inválido ou vazio nunca chega ao stream. O `idempotencyId` é o `batchId` do lote, determinístico: o reenvio do mesmo lote repete o id e a Varredura deduplica por lote (**nunca** por `metadata.correlationId`). O campo `metadata.correlationId` já existia; a partir da LLT-183 (T050) ele carrega o correlation id da requisição (`X-Correlation-Id` / `x-correlation-id`, ou o UUID gerado na entrada) — string opaca até 64 caracteres (`^[A-Za-z0-9._-]{1,64}$`), pode se repetir entre mensagens; a DLQ reutiliza o mesmo metadata. Contrato Finder: `specs/007-plan-rate-and-size-limits/contracts/stream-correlation-id.md`. Contrato de referência: `specs/002-tenant-product-logs/contracts/log-ingested-stream.md`. No ambiente local o Redis exige senha: defina `REDIS_PASSWORD` em `infra/local/.env`.
 
 ## Retry e DLQ (LLT-184)
 
@@ -183,7 +183,93 @@ Ao subir, o serviço registra em INFO uma linha padrão (ADR_149), emitida pela 
 [LhamaLog] lhamalog-collector iniciado | versao=0.0.1-SNAPSHOT | porta=8080 | perfis=local | java=25
 ```
 
-O nome vem de `spring.application.name`, a porta de `local.server.port`, a versão do `build-info` gerado pelo `spring-boot-maven-plugin` (ou `dev` se ausente) e os perfis ativos; sem perfil ativo explícito, mostra o perfil padrão (`spring.profiles.default`, hoje `local`).
+O nome vem de `spring.application.name`, a porta de `local.server.port`, a versão do `build-info` gerado pelo `spring-boot-maven-plugin` (ou `dev` se ausente) e os perfis ativos; sem perfil ativo explícito, mostra o perfil padrão (`spring.profiles.default`, hoje `local`). A linha de startup agora sai no padrão de linha do Collector (data ISO-8601 com offset, `cid`, `classe.método`); o texto ADR_149 em si permanece o mesmo.
+
+## Padrão de logs
+
+Formato de linha (console e arquivo), via `logging.pattern.*` em `application.properties`:
+
+- Data **ISO-8601 com offset** (ex.: `2026-11-16T01:40:12.345-03:00`); fuso em `lhamalog.logging.time-zone` (default `America/Sao_Paulo`).
+- Correlation id no MDC: `cid=%X{correlationId:-none}` (chave `correlationId`).
+- Referência `logger.método` no padrão da linha (`%logger{40}.%M`).
+- Header HTTP `X-Correlation-Id` / metadata gRPC `x-correlation-id` (aceito só se `^[A-Za-z0-9._-]{1,64}$`; senão UUID gerado).
+- WARN/ERROR e INFO de negócio: `event=<dominio.acao.resultado> | <texto> | chave=valor ...` (códigos em minúsculas com ponto). Ver [docs/rate-and-size-limits-runbook.md](docs/rate-and-size-limits-runbook.md).
+
+## Limites por tenant (LLT-183)
+
+Após autenticação, a ordem é **taxa → tamanho → reserva**. Propriedades e defaults em `application.properties`:
+
+| Propriedade | Default |
+|---|---|
+| `lhamalog.otlp.max-batch-size` | `5MB` |
+| `lhamalog.otlp.max-message-size` | `64MB` |
+| `lhamalog.rate-limit.enabled` | `true` |
+| `lhamalog.rate-limit.requests-per-second` | `20` |
+| `lhamalog.rate-limit.retry-after` | `5s` |
+| `lhamalog.rate-limit.violations-before-block` | `5` |
+| `lhamalog.rate-limit.violation-window` | `60s` |
+| `lhamalog.rate-limit.block-duration` | `300s` |
+| `lhamalog.rate-limit.block-retry-after` | `300s` |
+| `lhamalog.rate-limit.on-store-unavailable` | `FAIL_OPEN` |
+| `lhamalog.quota.unavailable-retry-after` | `300s` |
+| `lhamalog.quota.unavailable-max-attempts` | `5` |
+| `lhamalog.quota.unavailable-attempt-ttl` | `30m` |
+
+Carência de assinatura DELINQUENT (antes `INADIMPLENTE`) (`lhamalog.subscription.delinquency-grace`, default 15d) fica no **Core**. Runbook: [docs/rate-and-size-limits-runbook.md](docs/rate-and-size-limits-runbook.md).
+
+### Clientes OTLP e janela “Core indisponível”
+
+Com Core fora, o Collector responde **503** / gRPC **UNAVAILABLE** com Retry-After / RetryInfo **300 s** até **5** tentativas do mesmo lote (~25 min); na 6ª, **500** / **INTERNAL** e o lote é perdido. Isso só funciona se o exportador continuar retentando por esse tempo.
+
+Exporters `otlp` / `otlphttp` do **OpenTelemetry Collector** usam `retry_on_failure` do [exporterhelper](https://github.com/open-telemetry/opentelemetry-collector/blob/main/exporter/exporterhelper/README.md): o default de `max_elapsed_time` é **300s (5 min)** — insuficiente para as 5×300 s. Suba para pelo menos **30m** e use `sending_queue` persistente (`file_storage`). O Collector LhamaLog honra `Retry-After` (HTTP) e `RetryInfo` (gRPC) como atraso de throttle. SDKs de aplicação (ex.: Java) têm políticas de retry curtas: envie via agente OTel Collector.
+
+Exemplo (otlphttp + otlp, token via env, fila persistente):
+
+```yaml
+extensions:
+  file_storage/otc:
+    directory: /var/lib/otelcol/file_storage
+
+exporters:
+  otlphttp/lhamalog:
+    endpoint: https://collector.example:4318
+    headers:
+      Authorization: "Bearer ${env:LHAMALOG_OTLP_TOKEN}"
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 30s
+      max_elapsed_time: 30m
+    sending_queue:
+      enabled: true
+      storage: file_storage/otc
+  otlp/lhamalog:
+    endpoint: collector.example:4317
+    tls:
+      insecure: false
+    headers:
+      Authorization: "Bearer ${env:LHAMALOG_OTLP_TOKEN}"
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 30s
+      max_elapsed_time: 30m
+    sending_queue:
+      enabled: true
+      storage: file_storage/otc
+
+service:
+  extensions: [file_storage/otc]
+  pipelines:
+    logs:
+      receivers: [otlp]
+      exporters: [otlphttp/lhamalog]
+    traces:
+      receivers: [otlp]
+      exporters: [otlp/lhamalog]
+```
+
+Detalhes operacionais: [docs/rate-and-size-limits-runbook.md](docs/rate-and-size-limits-runbook.md), [docs/quota-reservation-runbook.md](docs/quota-reservation-runbook.md).
 
 ## Perfis de execução (ADR_151)
 

@@ -6,6 +6,14 @@ import java.util.List;
 public interface QuotaGate<R, T> {
 	Reservation reserve(String tenantId, String productId, R request, List<T> accepted);
 
+	/**
+	 * Deterministic batch key identical to the reservation id for the same tenant/product/canonical bytes.
+	 * Used for Core-unavailable attempt budget when reserve times out before returning a {@link Reservation}.
+	 */
+	default String batchKey(String tenantId, String productId, R request, List<T> accepted) {
+		return null;
+	}
+
 	void confirm(String reservationId);
 
 	void release(String reservationId);
@@ -21,6 +29,13 @@ public interface QuotaGate<R, T> {
 	}
 
 	record Reservation(Outcome outcome, String reservationId) {
-		public enum Outcome { AUTHORIZED, INSUFFICIENT_BALANCE, NO_PLAN, UNAVAILABLE }
+		public enum Outcome {
+			AUTHORIZED,
+			INSUFFICIENT_BALANCE,
+			NO_PLAN,
+			UNAVAILABLE,
+			/** Subscription suspended; Collector maps to OTLP 403 when Core client is wired. */
+			SUSPENDED
+		}
 	}
 }

@@ -9,6 +9,7 @@ import br.com.lhamalog.collector.ingestion.otlp.auth.BearerToken;
 import br.com.lhamalog.collector.ingestion.otlp.domain.IngestionDecision;
 import br.com.lhamalog.collector.ingestion.otlp.http.OtlpHttpStatusMapper.HttpOutcome;
 import br.com.lhamalog.collector.ingestion.otlp.http.OtlpHttpStatusMapper.Signal;
+import br.com.lhamalog.collector.logging.CorrelationId;
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.Message;
 import com.sun.net.httpserver.HttpExchange;
@@ -65,6 +66,8 @@ public class OtlpHttpServer implements SmartLifecycle {
 
 	private final long maxMessageBytes;
 
+	private final long maxBatchBytes;
+
 	private final ExportLogsService logs;
 
 	private final ExportTracesService traces;
@@ -78,17 +81,26 @@ public class OtlpHttpServer implements SmartLifecycle {
 	private ExecutorService executor;
 
 	public OtlpHttpServer(String host, int port, long maxMessageBytes, ExportLogsService logs, ExportTracesService traces) {
-		this(host, port, maxMessageBytes, logs, traces, HttpLimits.DEFAULT);
+		this(host, port, maxMessageBytes, maxMessageBytes, logs, traces, HttpLimits.DEFAULT);
 	}
 
 	public OtlpHttpServer(String host, int port, long maxMessageBytes, ExportLogsService logs, ExportTracesService traces,
 			HttpLimits limits) {
+		this(host, port, maxMessageBytes, maxMessageBytes, logs, traces, limits);
+	}
+
+	public OtlpHttpServer(String host, int port, long maxMessageBytes, long maxBatchBytes, ExportLogsService logs,
+			ExportTracesService traces, HttpLimits limits) {
 		if (maxMessageBytes <= 0) {
 			throw new IllegalArgumentException("maxMessageBytes must be positive");
+		}
+		if (maxBatchBytes <= 0) {
+			throw new IllegalArgumentException("maxBatchBytes must be positive");
 		}
 		this.host = host;
 		this.port = port;
 		this.maxMessageBytes = maxMessageBytes;
+		this.maxBatchBytes = Math.min(maxBatchBytes, maxMessageBytes);
 		this.logs = logs;
 		this.traces = traces;
 		this.limits = limits;
@@ -134,8 +146,8 @@ public class OtlpHttpServer implements SmartLifecycle {
 		server.setExecutor(executor);
 		server.createContext("/", this::handle);
 		server.start();
-		log.info("OTLP/HTTP receiver listening on {}:{} (max concurrent requests {}, {})", host, getPort(),
-				limits.maxConcurrentRequests(), effective);
+		log.info("event=otlp.http.started | OTLP/HTTP receiver listening on {}:{} (max concurrent requests {}, {})",
+				host, getPort(), limits.maxConcurrentRequests(), effective);
 	}
 
 	@Override
@@ -144,7 +156,7 @@ public class OtlpHttpServer implements SmartLifecycle {
 			server.stop(1);
 			executor.close();
 			server = null;
-			log.info("OTLP/HTTP receiver stopped");
+			log.info("event=otlp.http.stopped | OTLP/HTTP receiver stopped");
 		}
 	}
 
@@ -159,17 +171,25 @@ public class OtlpHttpServer implements SmartLifecycle {
 	}
 
 	private void handle(HttpExchange exchange) throws IOException {
-		if (!inFlight.tryAcquire()) {
-			try (exchange) {
-				write(exchange, OtlpHttpStatusMapper.overloaded(), responseType(exchange));
-			}
-			return;
-		}
+		String correlationId = CorrelationId.resolve(exchange.getRequestHeaders().getFirst(CorrelationId.HEADER));
+		CorrelationId.put(correlationId);
+		exchange.getResponseHeaders().set(CorrelationId.HEADER, correlationId);
 		try {
-			dispatch(exchange);
+			if (!inFlight.tryAcquire()) {
+				try (exchange) {
+					write(exchange, OtlpHttpStatusMapper.overloaded(), responseType(exchange));
+				}
+				return;
+			}
+			try {
+				dispatch(exchange);
+			}
+			finally {
+				inFlight.release();
+			}
 		}
 		finally {
-			inFlight.release();
+			CorrelationId.clear();
 		}
 	}
 
@@ -203,7 +223,7 @@ public class OtlpHttpServer implements SmartLifecycle {
 			write(exchange, OtlpHttpStatusMapper.map(decision, signal), responseType);
 		}
 		catch (RuntimeException ex) {
-			log.error("Unexpected failure in OTLP/HTTP receiver", ex);
+			log.error("event=otlp.http.unexpected_failure | Unexpected failure in OTLP/HTTP receiver", ex);
 			throw ex;
 		}
 	}
@@ -222,11 +242,20 @@ public class OtlpHttpServer implements SmartLifecycle {
 				throw new PayloadRejectedException(IngestionDecision.Reason.UNSUPPORTED_ENCODING,
 						"unsupported content encoding; use gzip or none");
 			}
-			if (!gzip && declaredLength(exchange) > maxMessageBytes) {
+			long declared = declaredLength(exchange);
+			if (!gzip && declared > maxMessageBytes) {
 				throw new PayloadRejectedException(IngestionDecision.Reason.TOO_LARGE,
 						"body exceeds the limit of " + maxMessageBytes + " bytes");
 			}
+			if (!gzip && declared > maxBatchBytes) {
+				throw new PayloadRejectedException(IngestionDecision.Reason.BATCH_TOO_LARGE,
+						"body exceeds the application batch limit of " + maxBatchBytes + " bytes");
+			}
 			byte[] body = readBody(exchange.getRequestBody(), gzip);
+			if (body.length > maxBatchBytes) {
+				throw new PayloadRejectedException(IngestionDecision.Reason.BATCH_TOO_LARGE,
+						"decompressed body exceeds the application batch limit of " + maxBatchBytes + " bytes");
+			}
 			try {
 				if (JSON.equals(contentType)) {
 					OtlpJson.parse(body, builder);

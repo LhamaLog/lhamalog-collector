@@ -19,8 +19,8 @@ public final class CoreAuthenticationProvider {
 	public CoreAuthenticationProvider(String token) {
 		this.token = Optional.ofNullable(normalize(token)).filter(value -> !value.isBlank())
 			.orElseThrow(() -> new IllegalArgumentException(ENVIRONMENT_VARIABLE + " must be configured"));
-		log.info("Collector Core service token configured length={} sha256={}", this.token.length(),
-				sha256Hex(this.token));
+		log.info("event=usage.core.token_configured | Collector Core service token configured length={} sha256={}",
+				this.token.length(), sha256Hex(this.token));
 	}
 
 	public static CoreAuthenticationProvider fromEnvironment() {

@@ -114,13 +114,14 @@ public abstract class AbstractStreamPublisher<T> {
 			try {
 				xadd(stream, maxLen, entries);
 				if (attempt > 1) {
-					log.info("Published to {} after {} attempts", stream, attempt);
+					log.info("event=messaging.publish.retried | Published to {} after {} attempts", stream, attempt);
 				}
 				return List.copyOf(envelopes);
 			}
 			catch (MessagePublishException ex) {
 				lastFailure = ex;
-				log.warn("Publish attempt {}/{} failed for {}: {}", attempt, maxAttempts, stream, formatError(ex));
+				log.warn("event=messaging.publish.attempt_failed | Publish attempt {}/{} failed for {}: {}", attempt,
+						maxAttempts, stream, formatError(ex));
 				if (attempt == maxAttempts) {
 					break;
 				}
@@ -142,13 +143,14 @@ public abstract class AbstractStreamPublisher<T> {
 		}
 		try {
 			writeDlq(envelopes, maxAttempts, lastFailure);
-			log.error("Moved {} message(s) to DLQ {} after {} failed attempts to {}", envelopes.size(), dlqStream,
-					maxAttempts, stream);
+			log.error(
+					"event=messaging.publish.moved_to_dlq | Moved {} message(s) to DLQ {} after {} failed attempts to {}",
+					envelopes.size(), dlqStream, maxAttempts, stream);
 			return List.copyOf(envelopes);
 		}
 		catch (MessagePublishException dlqFailure) {
-			log.error("DLQ write failed for {} after {} attempts to {}: {}", dlqStream, maxAttempts, stream,
-					formatError(dlqFailure));
+			log.error("event=messaging.publish.dlq_failed | DLQ write failed for {} after {} attempts to {}: {}",
+					dlqStream, maxAttempts, stream, formatError(dlqFailure));
 			throw new MessagePublishException(
 					"Redis did not accept the entries for " + stream + " and DLQ " + dlqStream, dlqFailure);
 		}

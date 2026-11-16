@@ -1,6 +1,7 @@
 package br.com.lhamalog.collector.usage.outbox;
 
 import br.com.lhamalog.collector.config.UsageProperties;
+import br.com.lhamalog.collector.logging.CorrelationId;
 import br.com.lhamalog.collector.usage.core.UsageOutboxObservability;
 import java.time.Clock;
 import java.time.Instant;
@@ -58,29 +59,40 @@ public final class UsageAcceptanceReconciler {
 
 	public void reconcilePendingBefore(Instant graceDeadline) {
 		for (UsageOutboxItem item : outbox.findPendingBefore(graceDeadline)) {
-			if (properties != null) {
-				observability.pendingAge(item, clock.instant(), properties.grace());
+			CorrelationId.put(CorrelationId.newId());
+			try {
+				reconcileItem(item);
 			}
-			String value = evidence.resolvePending(item.acceptedEvidenceKey());
-			if (value.startsWith("ABANDONED")) {
-				if (outbox.compareAndSet(item, item.abandon())) {
-					observability.transition(UsageOutboxState.ABANDONED);
-				}
+			finally {
+				CorrelationId.clear();
 			}
-			else if (value.startsWith("DONE")) {
-				if (outbox.compareAndSet(item, item.accept())) {
-					observability.transition(UsageOutboxState.ACCEPTED);
-				}
+		}
+	}
+
+	private void reconcileItem(UsageOutboxItem item) {
+		if (properties != null) {
+			observability.pendingAge(item, clock.instant(), properties.grace());
+		}
+		String value = evidence.resolvePending(item.acceptedEvidenceKey());
+		if (value.startsWith("ABANDONED")) {
+			if (outbox.compareAndSet(item, item.abandon())) {
+				observability.transition(UsageOutboxState.ABANDONED);
 			}
-			else if (value.startsWith("CLAIMED")) {
-				if (outbox.compareAndSet(item, item.markAmbiguous())) {
-					observability.ambiguous();
-					log.error("Usage fact {} is ambiguous after Redis claim", item.id());
-				}
+		}
+		else if (value.startsWith("DONE")) {
+			if (outbox.compareAndSet(item, item.accept())) {
+				observability.transition(UsageOutboxState.ACCEPTED);
 			}
-			else {
-				log.warn("Usage fact {} has unknown Redis evidence state", item.id());
+		}
+		else if (value.startsWith("CLAIMED")) {
+			if (outbox.compareAndSet(item, item.markAmbiguous())) {
+				observability.ambiguous();
+				log.error("event=usage.outbox.ambiguous | Usage fact {} is ambiguous after Redis claim", item.id());
 			}
+		}
+		else {
+			log.warn("event=usage.outbox.unknown_evidence | Usage fact {} has unknown Redis evidence state",
+					item.id());
 		}
 	}
 }

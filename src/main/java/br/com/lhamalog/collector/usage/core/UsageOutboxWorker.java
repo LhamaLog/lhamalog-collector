@@ -1,6 +1,7 @@
 package br.com.lhamalog.collector.usage.core;
 
 import br.com.lhamalog.collector.config.UsageProperties;
+import br.com.lhamalog.collector.logging.CorrelationId;
 import br.com.lhamalog.collector.usage.outbox.UsageOutboxItem;
 import br.com.lhamalog.collector.usage.outbox.UsageOutboxRepository;
 import br.com.lhamalog.collector.usage.outbox.UsageOutboxState;
@@ -51,7 +52,8 @@ public final class UsageOutboxWorker {
 		this.clock = clock;
 		this.owner = owner;
 		this.observability = observability == null ? UsageOutboxObservability.NOOP : observability;
-		log.info("Usage outbox worker scheduled (interval={})", properties.workerInterval());
+		log.info("event=usage.outbox.worker_scheduled | Usage outbox worker scheduled (interval={})",
+				properties.workerInterval());
 	}
 
 	@Scheduled(fixedDelayString = "${lhamalog.usage.worker-interval:10s}")
@@ -65,16 +67,28 @@ public final class UsageOutboxWorker {
 	}
 
 	private void deliver(UsageOutboxItem candidate, Instant now) {
+		CorrelationId.put(CorrelationId.newId());
+		try {
+			deliverWithCorrelation(candidate, now);
+		}
+		finally {
+			CorrelationId.clear();
+		}
+	}
+
+	private void deliverWithCorrelation(UsageOutboxItem candidate, Instant now) {
 		UsageOutboxItem leased;
 		try {
 			leased = candidate.lease(owner, now, now.plus(properties.lease()));
 		}
 		catch (IllegalStateException exception) {
-			log.warn("Usage fact {} not available for lease ({})", candidate.id(), exception.getMessage());
+			log.warn("event=usage.outbox.lease_unavailable | Usage fact {} not available for lease ({})",
+					candidate.id(), exception.getMessage());
 			return;
 		}
 		if (!outbox.compareAndSet(candidate, leased)) {
-			log.warn("Usage fact {} lease CAS did not match the stored item", candidate.id());
+			log.warn("event=usage.outbox.lease_cas_mismatch | Usage fact {} lease CAS did not match the stored item",
+					candidate.id());
 			return;
 		}
 		try {
@@ -83,8 +97,10 @@ public final class UsageOutboxWorker {
 				if (outbox.compareAndSet(leased, leased.sync(clock.instant()))) {
 					observability.transition(UsageOutboxState.SYNCED);
 				}
-				log.info("Usage fact delivered to Core status={} domain={} records={} bytes={}", status,
-						leased.fact().domain(), leased.fact().acceptedRecordCount(), leased.fact().acceptedBytes());
+				log.info(
+						"event=usage.outbox.delivered | Usage fact delivered to Core status={} domain={} records={} bytes={}",
+						status, leased.fact().domain(), leased.fact().acceptedRecordCount(),
+						leased.fact().acceptedBytes());
 			}
 			else if (status >= 400 && status < 500 && status != 429) {
 				suspend(leased, "HTTP_" + status);
@@ -101,7 +117,8 @@ public final class UsageOutboxWorker {
 			retry(leased, "INTERRUPTED");
 		}
 		catch (RuntimeException ex) {
-			log.warn("Usage fact {} delivery failed unexpectedly", leased.id(), ex);
+			log.warn("event=usage.outbox.delivery_unexpected | Usage fact {} delivery failed unexpectedly", leased.id(),
+					ex);
 			retry(leased, "UNEXPECTED");
 		}
 	}
@@ -112,7 +129,7 @@ public final class UsageOutboxWorker {
 		Instant now = clock.instant();
 		outbox.compareAndSet(item, item.retry(nextRetryAt(item, now, properties), code));
 		observability.retry(item);
-		log.warn("Usage fact {} delivery deferred ({})", item.id(), code);
+		log.warn("event=usage.outbox.deferred | Usage fact {} delivery deferred ({})", item.id(), code);
 	}
 
 	static Instant nextRetryAt(UsageOutboxItem item, Instant now, UsageProperties properties) {
@@ -137,6 +154,6 @@ public final class UsageOutboxWorker {
 	private void suspend(UsageOutboxItem item, String code) {
 		outbox.compareAndSet(item, item.suspend(code));
 		observability.suspended(item);
-		log.warn("Usage fact {} delivery suspended ({})", item.id(), code);
+		log.warn("event=usage.outbox.suspended | Usage fact {} delivery suspended ({})", item.id(), code);
 	}
 }

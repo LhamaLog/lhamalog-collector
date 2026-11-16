@@ -129,6 +129,36 @@ minutos expira e estorna uma única vez.
 - [ ] T083 [LOW] **Core** `UsageFactRequest` (DTO de API) ainda circula como modelo de domínio/persistência (`UsageFactService`/`StoredUsageFact`); completar separação além do mapper T060.
 - [ ] T084 [LOW] **Collector** Revisar métrica/estado para suspensão 4xx na outbox de usage se ainda houver caminho sem `lhamalog.usage.outbox.suspended` (T066 cobre o worker; validar outros 4xx).
 
+## Revisão 3 (15/11/2026) — pendências após o merge em Development
+
+> Merge feito pelo BimBot após a revisão 3 (Collector PR #5 → `efa9c3c`, Core PR #4 → `a3b2e64`). Itens sem tarefa até aqui:
+
+### Novas tarefas abertas
+
+- [ ] T086 [MEDIUM] **Collector** Aceitação parcial do destino (`SinkRejectedException.acceptedCount > 0`) mantém o débito, mas não gera fato de uso nem publicação no stream de leitura para os registros aceitos (item 8 da revisão 3). Definir e implementar a medição/publicação dos aceitos, ou registrar a decisão de produto.
+- [ ] T087 [LOW] **Collector** Resíduo do item 4: `saveIfAbsent`/`findPending` ainda executam fora do bloco `try`, então uma falha ali escapa do tratamento previsto. Mover para dentro do `try` e cobrir com teste.
+- [ ] T088 [LOW] **Collector/Core** Validar a durabilidade do Redis (AOF ligado e `appendfsync` adequado) no startup ou no runbook, já que evidência e streams dependem dela.
+- [ ] T089 [LOW] **Core e Collector** Documentação: README/CHANGELOG do Core sem a API interna de uso e o token `LHAMALOG_CORE_USAGE_TOKEN`; README do Collector sem a reserva de cota (`lhamalog.quota.*`, `LHAMALOG_COLLECTOR_CORE_TOKEN`).
+- [ ] T090 [LOW] **Collector** Remover dos logs o SHA-256 do token de serviço (hoje em DEBUG em `CoreUsageFactsClient`) ou restringir a um diagnóstico explícito.
+- [ ] T091 [LOW] **Collector** Teste do trailer gRPC `retry-after` nas recusas 429/`RESOURCE_EXHAUSTED` e 503/`UNAVAILABLE`.
+- [ ] T092 [LOW] **Collector/Core** Divergência de `schemaVersion`: ADR_146 indica 2 e o código/contrato usam 1. Alinhar o código e o contrato à decisão do dono do ADR (sem editar o ADR nesta tarefa).
+- [ ] T093 [LOW] **Collector** Divergência na documentação do sanitizador: a doc diz `BatchSanitizer.identity()`, mas o código usa `toString()`. Corrigir a doc ou o código para refletirem o mesmo comportamento.
+- [ ] T094 [LOW] **Collector** Teste pendente: reenvio de lote `ABANDONED` contra o script Lua real (Redis via Testcontainers), além do teste com dublê.
+- [ ] T095 [LOW] **Collector** Teste pendente: falha pós-publicação (`SinkUnavailableException.afterPublish`) no sink de traces, espelhando o teste de logs.
+- [ ] T096 [LOW] **Collector e Core** Reexecutar `mvnw.cmd verify` em Development: o verify registrado (228/49) rodou antes dos commits finais da revisão 3.
+
+### Pendências já abertas (referência cruzada)
+
+- T078: corrida entre refund pendente e reenvio. Inclui também o caso de duplicidade com evidência `CLAIMED`.
+- T079: escritas multi-documento não transacionais no Core.
+- T080: pool fixo de 4 threads com timeout de 5 s.
+- T081: sanitização real além do gancho provisório (ver também T093).
+- T082: classes E2E em `src/main`.
+
+### Bloqueio de produção
+
+- **Produção com a cota HABILITADA (`lhamalog.quota.enabled=true`) fica bloqueada até concluir T078, T080, T081 e T086 (item 8).** A cota vem desabilitada por padrão.
+
 ## Dependências e ordem de execução
 
 1. T007–T014 escrevem testes; T015 estabelece contrato, persistência, cliente, configuração e observabilidade.

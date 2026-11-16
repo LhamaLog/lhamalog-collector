@@ -1,5 +1,6 @@
 package br.com.lhamalog.collector.quota;
 
+import br.com.lhamalog.collector.logging.CorrelationId;
 import br.com.lhamalog.collector.usage.core.CoreAuthenticationProvider;
 import java.io.IOException;
 import java.net.URI;
@@ -30,12 +31,14 @@ public final class HttpQuotaReservationClient implements QuotaReservationClient 
 	@Override
 	public ReservationOutcome reserve(ReservationRequest request) {
 		try {
-			HttpResponse<String> response = http.send(HttpRequest.newBuilder(endpoint).timeout(timeout)
+			HttpResponse<String> response = http.send(withCorrelation(HttpRequest.newBuilder(endpoint).timeout(timeout)
 					.header("Content-Type", "application/json")
 					.header("X-LhamaLog-Service-Token", authentication.serviceToken())
-					.POST(HttpRequest.BodyPublishers.ofString(json.writeValueAsString(request))).build(), HttpResponse.BodyHandlers.ofString());
+					.POST(HttpRequest.BodyPublishers.ofString(json.writeValueAsString(request)))).build(),
+					HttpResponse.BodyHandlers.ofString());
 			return switch (response.statusCode()) {
 				case 200, 201 -> parseOutcome(response.body());
+				case 403 -> parseSuspendedOrUnavailable(response.body());
 				case 409 -> ReservationOutcome.INSUFFICIENT_BALANCE;
 				case 422 -> ReservationOutcome.NO_PLAN;
 				default -> throw new UnavailableException("Core reservation returned " + response.statusCode());
@@ -60,9 +63,10 @@ public final class HttpQuotaReservationClient implements QuotaReservationClient 
 	@Override
 	public int refund(String reservationId) {
 		try {
-			HttpResponse<String> response = http.send(HttpRequest.newBuilder(transitionEndpoint(reservationId, "refund"))
-					.timeout(timeout).header("X-LhamaLog-Service-Token", authentication.serviceToken())
-					.POST(HttpRequest.BodyPublishers.noBody()).build(), HttpResponse.BodyHandlers.ofString());
+			HttpResponse<String> response = http.send(withCorrelation(HttpRequest
+					.newBuilder(transitionEndpoint(reservationId, "refund")).timeout(timeout)
+					.header("X-LhamaLog-Service-Token", authentication.serviceToken())
+					.POST(HttpRequest.BodyPublishers.noBody())).build(), HttpResponse.BodyHandlers.ofString());
 			return response.statusCode();
 		}
 		catch (IOException | InterruptedException exception) {
@@ -73,9 +77,10 @@ public final class HttpQuotaReservationClient implements QuotaReservationClient 
 
 	private void callTransition(String reservationId, String operation, boolean ignoreConflict) {
 		try {
-			HttpResponse<String> response = http.send(HttpRequest.newBuilder(transitionEndpoint(reservationId, operation))
-					.timeout(timeout).header("X-LhamaLog-Service-Token", authentication.serviceToken())
-					.POST(HttpRequest.BodyPublishers.noBody()).build(), HttpResponse.BodyHandlers.ofString());
+			HttpResponse<String> response = http.send(withCorrelation(HttpRequest
+					.newBuilder(transitionEndpoint(reservationId, operation)).timeout(timeout)
+					.header("X-LhamaLog-Service-Token", authentication.serviceToken())
+					.POST(HttpRequest.BodyPublishers.noBody())).build(), HttpResponse.BodyHandlers.ofString());
 			if (response.statusCode() == 204 || (ignoreConflict && response.statusCode() == 409)) return;
 			throw new UnavailableException("Core " + operation + " returned " + response.statusCode());
 		}
@@ -85,17 +90,49 @@ public final class HttpQuotaReservationClient implements QuotaReservationClient 
 		}
 	}
 
+	/** Adds {@code X-Correlation-Id} when the current MDC value is present. */
+	private static HttpRequest.Builder withCorrelation(HttpRequest.Builder builder) {
+		String correlationId = CorrelationId.current();
+		if (correlationId != null && !correlationId.isBlank()) {
+			builder.header(CorrelationId.HEADER, correlationId);
+		}
+		return builder;
+	}
+
 	private URI transitionEndpoint(String reservationId, String operation) {
 		return URI.create(endpoint.toString() + "/" + reservationId + "/" + operation);
 	}
 
+	/**
+	 * Parses {@code outcome} from Core JSON. Extra fields such as {@code overageBytes} are ignored
+	 * (Jackson tree read); only known {@link ReservationOutcome} names are accepted.
+	 */
 	private ReservationOutcome parseOutcome(String body) {
 		try {
-			String outcome = json.readTree(body).get("outcome").asText();
+			String outcome = json.readTree(body).path("outcome").asString();
+			if (outcome == null || outcome.isBlank()) {
+				throw new UnavailableException("Core reservation response is invalid");
+			}
 			return ReservationOutcome.valueOf(outcome);
 		}
-		catch (JacksonException | IllegalArgumentException | NullPointerException exception) {
+		catch (JacksonException | IllegalArgumentException exception) {
 			throw new UnavailableException("Core reservation response is invalid", exception);
 		}
+	}
+
+	/**
+	 * Core emits HTTP 403 with {@code {"outcome":"SUSPENDED",...}} for suspended subscriptions.
+	 * Any other 403 (or unparseable body) stays fail-closed as {@link UnavailableException}.
+	 */
+	private ReservationOutcome parseSuspendedOrUnavailable(String body) {
+		try {
+			if (ReservationOutcome.SUSPENDED == parseOutcome(body)) {
+				return ReservationOutcome.SUSPENDED;
+			}
+		}
+		catch (UnavailableException ignored) {
+			// fall through to generic 403 unavailable
+		}
+		throw new UnavailableException("Core reservation returned 403");
 	}
 }

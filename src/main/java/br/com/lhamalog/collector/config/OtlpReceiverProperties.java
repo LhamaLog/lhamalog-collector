@@ -21,6 +21,8 @@ public record OtlpReceiverProperties(
 		@DefaultValue Channel http,
 		@DefaultValue Channel grpc,
 		@DefaultValue("64MB") DataSize maxMessageSize,
+		/** Application batch ceiling (LLT-183); effective limit is {@code min(max-batch-size, max-message-size)}. */
+		@DefaultValue("5MB") DataSize maxBatchSize,
 		@DefaultValue OpenObserve openobserve,
 		@DefaultValue Timestamp timestamp,
 		@DefaultValue TokenCache tokenCache,
@@ -39,11 +41,29 @@ public record OtlpReceiverProperties(
 			throw new IllegalArgumentException("lhamalog.otlp.max-message-size must be at most " + Integer.MAX_VALUE
 					+ " bytes (about 2GB), got " + maxMessageSize.toBytes() + " bytes");
 		}
+		if (maxBatchSize == null || maxBatchSize.toBytes() <= 0) {
+			throw new IllegalArgumentException("lhamalog.otlp.max-batch-size must be greater than 0 (got "
+					+ maxBatchSize + ")");
+		}
+		if (maxBatchSize.toBytes() > Integer.MAX_VALUE) {
+			throw new IllegalArgumentException("lhamalog.otlp.max-batch-size must be at most " + Integer.MAX_VALUE
+					+ " bytes (about 2GB), got " + maxBatchSize.toBytes() + " bytes");
+		}
 	}
 
 	/** {@link #maxMessageSize()} em bytes, ja validado para caber em {@code int}. */
 	public int maxMessageBytes() {
 		return (int) maxMessageSize.toBytes();
+	}
+
+	/** {@link #maxBatchSize()} em bytes, ja validado para caber em {@code int}. */
+	public int maxBatchBytes() {
+		return (int) maxBatchSize.toBytes();
+	}
+
+	/** Effective application ceiling: the lesser of batch and transport limits. */
+	public int effectiveMaxBatchBytes() {
+		return Math.min(maxBatchBytes(), maxMessageBytes());
 	}
 
 	/** Um canal do receptor (HTTP ou gRPC). Porta 0 significa porta livre escolhida pelo sistema. */

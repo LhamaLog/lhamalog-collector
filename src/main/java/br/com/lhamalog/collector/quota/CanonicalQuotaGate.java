@@ -36,10 +36,15 @@ public final class CanonicalQuotaGate<R, T> implements QuotaGate<R, T> {
 	}
 
 	@Override
+	public String batchKey(String tenantId, String productId, R request, List<T> accepted) {
+		Measurement measurement = measurement(request, accepted);
+		return reservationIdFor(tenantId, productId, measurement);
+	}
+
+	@Override
 	public Reservation reserve(String tenantId, String productId, R request, List<T> accepted) {
 		Measurement measurement = measurement(request, accepted);
-		String reservationId = "quota:" + digest(tenantId + "\n" + productId + "\n" + measurement.domain + "\n"
-				+ HexFormat.of().formatHex(measurement.message.toByteArray()));
+		String reservationId = reservationIdFor(tenantId, productId, measurement);
 		QuotaReservationClient.ReservationOutcome outcome = client.reserve(new QuotaReservationClient.ReservationRequest(
 				reservationId, tenantId, productId, measurement.bytes, reservationId, measurement.domain));
 		return new Reservation(switch (outcome) {
@@ -59,6 +64,7 @@ public final class CanonicalQuotaGate<R, T> implements QuotaGate<R, T> {
 				observability.noPlan();
 				yield Reservation.Outcome.NO_PLAN;
 			}
+			case SUSPENDED -> Reservation.Outcome.SUSPENDED;
 		}, reservationId);
 	}
 
@@ -104,6 +110,15 @@ public final class CanonicalQuotaGate<R, T> implements QuotaGate<R, T> {
 			return new Measurement(value.domain(), value.acceptedRequest(), value.serializedBytes());
 		}
 		throw new IllegalArgumentException("unsupported OTLP request for quota");
+	}
+
+	/**
+	 * Deterministic reservation id (LLT-186): {@code quota:} + SHA-256(tenant, product, domain, canonical bytes).
+	 * Stable across exporter retries of the same accepted batch; used as Core-unavailable attempt budget key.
+	 */
+	private static String reservationIdFor(String tenantId, String productId, Measurement measurement) {
+		return "quota:" + digest(tenantId + "\n" + productId + "\n" + measurement.domain + "\n"
+				+ HexFormat.of().formatHex(measurement.message.toByteArray()));
 	}
 
 	private static String digest(String value) {

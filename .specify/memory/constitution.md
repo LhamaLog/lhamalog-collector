@@ -1,16 +1,12 @@
 <!--
 Sync Impact Report
-- Version change: 1.0.0 -> 2.0.0 (MAJOR: princípio II removido e redefinido)
-- Modified principles:
-  - II. Autoria humana mínima de 40% -> II. IA pode implementar 100%, com revisão e domínio do desenvolvedor
-- Added sections: nenhuma
-- Removed sections: nenhuma (a regra 60/40 e as marcas [IA]/[Michel] saem do princípio II e do fluxo de merge)
-- Templates requiring updates:
-  - .specify/templates/plan-template.md: ✅ sem referência a 60/40
-  - .specify/templates/spec-template.md: ✅ sem referência a 60/40
-  - .specify/templates/tasks-template.md: ✅ sem referência a 60/40
-  - specs/001-otlp-receiver/ (plan.md, research.md seção 11, tasks.md): ✅ atualizados
-- Follow-up TODOs: nenhum
+- Version change: 2.0.0 -> 2.1.0 (MINOR: principio VI novo)
+- Modified principles: nenhum
+- Added sections: VI. Padrao de logs: correlation id, funcao, aviso e data com fuso (decidido pelo Michel em 16/11/2026; rascunho de ADR ADR-padrao-de-logs-v1)
+- Removed sections: nenhuma
+- Templates requiring updates: nenhum (templates padrao do Spec Kit)
+- Follow-up TODOs: numero definitivo da ADR quando o Michel publicar; logs antigos fora do padrao listados como tarefas de acompanhamento na spec 007 (LLT-183)
+- Historico: 1.0.0 -> 2.0.0 (MAJOR: principio II removido e redefinido)
 -->
 # LhamaLog Collector Constitution
 
@@ -70,6 +66,36 @@ rotação do segredo e a remoção do valor do histórico.
 Rationale: o collector autentica produtos com token Bearer. Segredo no
 repositório vaza para todo clone e para o histórico.
 
+### VI. Padrão de logs: correlation id, função, aviso e data com fuso (NON-NEGOTIABLE)
+
+Todo log do serviço MUST seguir o padrão de logs do LhamaLog (rascunho de ADR
+`ADR-padrao-de-logs-v1`, decidido pelo Michel em 16/11/2026), e qualquer IA ou
+pessoa que gere ou altere código MUST respeitá-lo:
+
+- Linha: data ISO-8601 com milissegundos e deslocamento de fuso
+  (`yyyy-MM-dd'T'HH:mm:ss.SSSXXX`, fuso padrão America/Sao_Paulo, configurável
+  por `lhamalog.logging.time-zone`), nível, nome do serviço,
+  `cid=<correlationId>`, thread e função de origem (`classe.método`), definidos
+  em `logging.pattern.console` e `logging.pattern.file`.
+- Correlation id no MDC `correlationId`: lido de `X-Correlation-Id` (HTTP) ou
+  `x-correlation-id` (gRPC), validado por `^[A-Za-z0-9._-]{1,64}$`, gerado
+  (UUID) quando ausente ou inválido, devolvido na resposta, propagado nas
+  chamadas entre serviços e sempre removido do MDC ao fim. Tarefas em segundo
+  plano geram um id por execução ou por item.
+- Todo WARN e ERROR (e todo evento de negócio em INFO) MUST começar com
+  `event=<dominio.acao.resultado> | <aviso> | chave=valor`. ERROR é o que deve
+  ser notificado ao time; WARN é degradação monitorada. Métrica do mesmo evento
+  usa o mesmo código.
+- Log MUST NOT conter segredo (só tamanho ou SHA-256), payload ou dado pessoal.
+  Condição esperada vai sem stack trace.
+
+Código novo ou alterado MUST seguir este princípio; logs antigos fora do padrão
+são ajustados quando o código for tocado ou em tarefa própria.
+
+Rationale: o Collector e o Core trocam chamadas e retentativas que se espalham
+por minutos. Sem correlation id, função, código de aviso e fuso, o debug entre
+serviços e ambientes depende de adivinhação.
+
 ## Stack tecnológico
 
 O LhamaLog Collector MUST ser implementado em Java 25, Spring Boot 4.1.1 e
@@ -103,7 +129,7 @@ Versionamento:
 - PATCH: clarificação, redação ou correção que não muda a regra.
 
 Revisão de conformidade: specify, plan, tasks e o review de merge MUST checar
-os cinco princípios, o stack e o fluxo de desenvolvimento. Violação bloqueia o
+os seis princípios, o stack e o fluxo de desenvolvimento. Violação bloqueia o
 merge até a correção ou até uma emenda explícita desta constituição.
 
-**Version**: 2.0.0 | **Ratified**: 2026-10-30 | **Last Amended**: 2026-10-31
+**Version**: 2.1.0 | **Ratified**: 2026-10-30 | **Last Amended**: 2026-11-16

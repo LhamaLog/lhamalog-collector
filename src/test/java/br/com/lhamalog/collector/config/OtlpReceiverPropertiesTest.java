@@ -42,6 +42,7 @@ class OtlpReceiverPropertiesTest {
 		runner.run(context -> {
 			OtlpReceiverProperties properties = context.getBean(OtlpReceiverProperties.class);
 			assertThat(properties.maxMessageBytes()).isEqualTo(64 * 1024 * 1024);
+			assertThat(properties.maxBatchBytes()).isEqualTo(5 * 1024 * 1024);
 			assertThat(properties.timestamp().toWindow().maxAge()).hasMinutes(290);
 			assertThat(properties.tokenCache().negativeTtl()).hasSeconds(3);
 			assertThat(properties.tokenCache().negativeMaxSize()).isEqualTo(1000);

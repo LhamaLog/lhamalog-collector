@@ -101,6 +101,22 @@ class CanonicalQuotaGateTest {
 				.isEqualTo(QuotaGate.Reservation.Outcome.NO_PLAN);
 	}
 
+	@Test
+	void mapsSuspendedWithoutConfirmReleaseOrRefund() {
+		CanonicalQuotaGate<ExportLogsServiceRequest, Scoped<LogRecord>> suspended = gateReturning(
+				QuotaReservationClient.ReservationOutcome.SUSPENDED);
+		ExportLogsServiceRequest request = ExportLogsServiceRequest.newBuilder()
+				.addResourceLogs(ResourceLogs.newBuilder().setResource(Resource.getDefaultInstance())
+						.addScopeLogs(ScopeLogs.newBuilder().addLogRecords(LogRecord.getDefaultInstance())))
+				.build();
+		List<Scoped<LogRecord>> accepted = List.of(new Scoped<>(Resource.getDefaultInstance(),
+				io.opentelemetry.proto.common.v1.InstrumentationScope.getDefaultInstance(), LogRecord.getDefaultInstance()));
+
+		QuotaGate.Reservation reservation = suspended.reserve("tenant", "product", request, accepted);
+		assertThat(reservation.outcome()).isEqualTo(QuotaGate.Reservation.Outcome.SUSPENDED);
+		assertThat(reservation.reservationId()).startsWith("quota:");
+	}
+
 	private static CanonicalQuotaGate<ExportLogsServiceRequest, Scoped<LogRecord>> gateReturning(
 			QuotaReservationClient.ReservationOutcome outcome) {
 		return new CanonicalQuotaGate<>(new QuotaReservationClient() {

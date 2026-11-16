@@ -4,6 +4,7 @@ package br.com.lhamalog.collector.ingestion.otlp.sink;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import br.com.lhamalog.collector.ingestion.otlp.domain.Scoped;
+import br.com.lhamalog.collector.logging.CorrelationId;
 import br.com.lhamalog.collector.messaging.MessagingProperties;
 import br.com.lhamalog.collector.messaging.MetadataKeys;
 import br.com.lhamalog.collector.messaging.OutboundMessage;
@@ -19,6 +20,7 @@ import java.time.Clock;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.json.JsonMapper;
@@ -43,6 +45,11 @@ class TelemetryIngestedPublisherTest {
 	private static final ByteString TRACE = ByteString.copyFrom(new byte[] { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 });
 
 	private static final LogRecord INFO = log(9, "INFO", "order paid");
+
+	@AfterEach
+	void clearCorrelation() {
+		CorrelationId.clear();
+	}
 
 	private static KeyValue kv(String key, String value) {
 		return KeyValue.newBuilder().setKey(key).setValue(AnyValue.newBuilder().setStringValue(value)).build();
@@ -87,6 +94,36 @@ class TelemetryIngestedPublisherTest {
 			.containsEntry(MetadataKeys.CORRELATION_ID, "corr-1")
 			.containsEntry(MetadataKeys.TRACE_ID, "00000000000000000000000000000001")
 			.doesNotContainKey(MetadataKeys.RESERVATION_ID);
+	}
+
+	@Test
+	void requestCorrelationIdUsesMdcWhenValid() {
+		CorrelationId.put("req-cid-stream-1");
+		assertThat(TelemetryIngestedPublisher.requestCorrelationId()).isEqualTo("req-cid-stream-1");
+		List<Scoped<LogRecord>> records = scoped(INFO);
+		assertThat(LOGS.message("tenant-1", "product-a",
+				batch(Signal.LOGS, RecordIds.of("tenant-1", "product-a", records)), records,
+				TelemetryIngestedPublisher.requestCorrelationId()).metadata())
+			.containsEntry(MetadataKeys.CORRELATION_ID, "req-cid-stream-1");
+	}
+
+	@Test
+	void requestCorrelationIdGeneratesWhenMdcAbsent() {
+		CorrelationId.clear();
+		String generated = TelemetryIngestedPublisher.requestCorrelationId();
+		assertThat(CorrelationId.isValid(generated)).isTrue();
+	}
+
+	@Test
+	void dlqPathReusesSameCorrelationIdAsMainMessage() {
+		CorrelationId.put("dlq-shared-cid");
+		String cid = TelemetryIngestedPublisher.requestCorrelationId();
+		List<Scoped<LogRecord>> records = scoped(INFO);
+		OutboundMessage<TelemetryIngestedBody> message = LOGS.message("tenant-1", "product-a",
+				batch(Signal.LOGS, RecordIds.of("tenant-1", "product-a", records)), records, cid);
+		// Main stream and DLQ publish the same OutboundMessage instance (same metadata.correlationId).
+		assertThat(message.metadata()).containsEntry(MetadataKeys.CORRELATION_ID, "dlq-shared-cid");
+		assertThat(cid).isEqualTo("dlq-shared-cid");
 	}
 
 	@Test
