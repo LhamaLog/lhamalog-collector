@@ -17,8 +17,12 @@ métrica `lhamalog.quota.insufficient`; ausência de OpenObserve, stream/DLQ e `
 
 ## Core indisponível / sem plano / falha de confirm
 
-**Sintomas:** HTTP `503` / gRPC `UNAVAILABLE` com retry 120 s; métrica
-`lhamalog.quota.core_unavailable` ou `lhamalog.quota.no_plan`; lote não gravado.
+**Sintomas:** HTTP `503` / gRPC `UNAVAILABLE` com `Retry-After: 300` (LLT-183; até 5
+tentativas por lote); na 6ª tentativa HTTP `500` / gRPC `INTERNAL` sem Retry-After
+(`reason=quota_unavailable_exhausted`). Métrica `lhamalog.ingestion.refused` com
+`quota_unavailable` / `quota_unavailable_exhausted` (e, no caminho legado de cota,
+`lhamalog.quota.core_unavailable` / `lhamalog.quota.no_plan`); lote não gravado.
+Saldo insuficiente permanece Retry-After **120 s** (seção acima).
 
 **Ação:**
 
@@ -29,6 +33,9 @@ métrica `lhamalog.quota.insufficient`; ausência de OpenObserve, stream/DLQ e `
 4. Reserva deixada em `RESERVED` por queda entre `reserve` e `confirm` expira em 20 minutos no
    Core; o retry do exportador reutiliza o mesmo `reservationId` determinístico — não há
    reenfileiramento local de uma segunda reserva.
+5. Detalhes do orçamento de 5 tentativas, chaves Redis
+   `lhamalog:quota:core-unavailable:*` e propriedades: ver
+   [rate-and-size-limits-runbook.md](rate-and-size-limits-runbook.md).
 
 ## Recusa parcial do OpenObserve após `confirm`
 
@@ -80,6 +87,7 @@ publicador Redis Streams está indisponível ou desabilitado; o débito/`confirm
 
 ## Referências
 
+- Limites de taxa/tamanho e Core 503/300 (LLT-183): [rate-and-size-limits-runbook.md](rate-and-size-limits-runbook.md)
 - Métricas e logs sanitizados: [usage-measurement.md](usage-measurement.md)
 - Contrato de reserva: [`specs/006-ingest-quota-reservation/contracts/reservatokens-api.md`](../specs/006-ingest-quota-reservation/contracts/reservatokens-api.md)
 - Quickstart / evidência E2E: [`specs/006-ingest-quota-reservation/quickstart.md`](../specs/006-ingest-quota-reservation/quickstart.md)

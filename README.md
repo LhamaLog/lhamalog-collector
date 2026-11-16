@@ -183,7 +183,39 @@ Ao subir, o serviço registra em INFO uma linha padrão (ADR_149), emitida pela 
 [LhamaLog] lhamalog-collector iniciado | versao=0.0.1-SNAPSHOT | porta=8080 | perfis=local | java=25
 ```
 
-O nome vem de `spring.application.name`, a porta de `local.server.port`, a versão do `build-info` gerado pelo `spring-boot-maven-plugin` (ou `dev` se ausente) e os perfis ativos; sem perfil ativo explícito, mostra o perfil padrão (`spring.profiles.default`, hoje `local`).
+O nome vem de `spring.application.name`, a porta de `local.server.port`, a versão do `build-info` gerado pelo `spring-boot-maven-plugin` (ou `dev` se ausente) e os perfis ativos; sem perfil ativo explícito, mostra o perfil padrão (`spring.profiles.default`, hoje `local`). A linha de startup agora sai no padrão de linha do Collector (data ISO-8601 com offset, `cid`, `classe.método`); o texto ADR_149 em si permanece o mesmo.
+
+## Padrão de logs
+
+Formato de linha (console e arquivo), via `logging.pattern.*` em `application.properties`:
+
+- Data **ISO-8601 com offset** (ex.: `2026-11-16T01:40:12.345-03:00`); fuso em `lhamalog.logging.time-zone` (default `America/Sao_Paulo`).
+- Correlation id no MDC: `cid=%X{correlationId:-none}` (chave `correlationId`).
+- Referência `logger.método` no padrão da linha (`%logger{40}.%M`).
+- Header HTTP `X-Correlation-Id` / metadata gRPC `x-correlation-id` (aceito só se `^[A-Za-z0-9._-]{1,64}$`; senão UUID gerado).
+- WARN/ERROR e INFO de negócio: `event=<dominio.acao.resultado> | <texto> | chave=valor ...` (códigos em minúsculas com ponto). Ver [docs/rate-and-size-limits-runbook.md](docs/rate-and-size-limits-runbook.md).
+
+## Limites por tenant (LLT-183)
+
+Após autenticação, a ordem é **taxa → tamanho → reserva**. Propriedades e defaults em `application.properties`:
+
+| Propriedade | Default |
+|---|---|
+| `lhamalog.otlp.max-batch-size` | `5MB` |
+| `lhamalog.otlp.max-message-size` | `64MB` |
+| `lhamalog.rate-limit.enabled` | `true` |
+| `lhamalog.rate-limit.requests-per-second` | `20` |
+| `lhamalog.rate-limit.retry-after` | `5s` |
+| `lhamalog.rate-limit.violations-before-block` | `5` |
+| `lhamalog.rate-limit.violation-window` | `60s` |
+| `lhamalog.rate-limit.block-duration` | `300s` |
+| `lhamalog.rate-limit.block-retry-after` | `300s` |
+| `lhamalog.rate-limit.on-store-unavailable` | `FAIL_OPEN` |
+| `lhamalog.quota.unavailable-retry-after` | `300s` |
+| `lhamalog.quota.unavailable-max-attempts` | `5` |
+| `lhamalog.quota.unavailable-attempt-ttl` | `30m` |
+
+Carência de assinatura INADIMPLENTE (`lhamalog.subscription.delinquency-grace`, default 15d) fica no **Core**. Runbook: [docs/rate-and-size-limits-runbook.md](docs/rate-and-size-limits-runbook.md).
 
 ## Perfis de execução (ADR_151)
 
