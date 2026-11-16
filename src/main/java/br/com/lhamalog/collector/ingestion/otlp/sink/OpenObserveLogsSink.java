@@ -12,7 +12,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Logs destination: OpenObserve stream {@code logs} of organization {@code lhamalog} (T017, T026, T041, T043).
+ * Logs destination: OpenObserve stream per tenant (LLT-185), organization {@code lhamalog} by default.
  *
  * <p>Each accepted log becomes one flat document with {@code tenantId} and {@code productId} of the token at
  * the top level (the batch cannot override them), {@code _timestamp} in microseconds from
@@ -27,13 +27,14 @@ public class OpenObserveLogsSink implements LogsSink, BatchStore<LogRecord> {
 
 	private final OpenObserveClient client;
 
-	private final String stream;
+	/** Configurable prefix ({@code OPENOBSERVE_LOGS_STREAM}); stream name is {@link TenantStreamNames}. */
+	private final String streamPrefix;
 
 	private final Clock clock;
 
-	public OpenObserveLogsSink(OpenObserveClient client, String stream, Clock clock) {
+	public OpenObserveLogsSink(OpenObserveClient client, String streamPrefix, Clock clock) {
 		this.client = client;
-		this.stream = stream;
+		this.streamPrefix = streamPrefix;
 		this.clock = clock;
 	}
 
@@ -44,6 +45,7 @@ public class OpenObserveLogsSink implements LogsSink, BatchStore<LogRecord> {
 
 	@Override
 	public StoredBatch store(String tenantId, String productId, List<Scoped<LogRecord>> acceptedRecords) {
+		String stream = TenantStreamNames.resolve(streamPrefix, tenantId);
 		if (acceptedRecords.isEmpty()) {
 			return StoredBatch.empty(Signal.LOGS, client.organization(), stream, clock.instant());
 		}
