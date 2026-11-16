@@ -30,12 +30,12 @@ Projeto Docker: `lhamalog-observability` — **não** usa o `.env` de secrets do
 | Loki | http://localhost:3100 | — |
 | Collector scrape | http://localhost:9464/actuator/prometheus | público (só health/info/prometheus) |
 
-Anonymous Viewer no Grafana está habilitado **somente** no compose local.
+Grafana **sem** acesso anônimo: entre com `GRAFANA_ADMIN_USER` / `GRAFANA_ADMIN_PASSWORD` do `infra/local/.env` (o compose para com erro se a senha faltar). Prometheus (9090), Loki (3100) e Grafana (3000) só escutam em `127.0.0.1`. O Loki roda com `auth_enabled: false` (single-tenant local) porque só fica em loopback e o Alloy usa a rede interna do compose; em ambiente compartilhado o certo é `auth_enabled: true` com proxy autenticado.
 
 ## Porta de management (segurança)
 
 - Default `MANAGEMENT_PORT=9464` (evita conflito com Core em 8081).
-- Em **prod**: `management.server.address=127.0.0.1` (ou rede interna). **Não** expor publicamente.
+- `MANAGEMENT_ADDRESS` (default `127.0.0.1` em **todos** os perfis, inclusive dev/local): interface da porta de management. O Prometheus do compose chega nela por `host.docker.internal` (Docker Desktop encaminha para o loopback do host). Use `0.0.0.0` só se o Docker não alcançar o host (ex.: Linux sem host-gateway) e nunca em rede compartilhada. **Não** expor publicamente.
 - Em local Docker Desktop o bind default escuta em todas as interfaces para o Prometheus alcançar via `host.docker.internal`.
 - SecurityFilterChain libera só `health`, `info`, `prometheus`. Demais Actuator não são expostos. Porta 8080 permanece autenticada.
 
@@ -83,3 +83,8 @@ No dashboard, variável textbox `cid` filtra o painel de logs.
 ## Nota sobre `http.server.requests`
 
 Os receivers OTLP são JDK HttpServer/gRPC (não Spring MVC). Painéis `http_server_requests_*` cobrem sobretudo tráfego Actuator/MVC. Latência OTLP = `lhamalog.ingestion.latency`.
+
+## Outcome `partial` e lote parcialmente aceito
+
+- `lhamalog.ingestion.latency{outcome}`: `accepted` | `partial` | `refused` | `failed`. `partial` = parte dos registros gravada e parte rejeitada (validação local ou recusa do OpenObserve).
+- Na aceitação parcial do OpenObserve, `accepted.records` soma só os registros gravados. O OpenObserve não diz quais foram, então `accepted.bytes` é uma estimativa: bytes entregues × gravados ÷ entregues (arredondado para baixo). A cobrança continua pelo débito da reserva, não por essa métrica.

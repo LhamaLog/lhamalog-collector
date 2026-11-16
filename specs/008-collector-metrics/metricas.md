@@ -17,7 +17,7 @@ Tag comum: `application` (= `spring.application.name`).
 | `lhamalog.queue.size` | gauge | signal | XLEN `lhamalog:stream:logs\|traces` (cache 15s) | `lhamalog_queue_size` | `lhamalog_queue_size` | Queue size |
 | `lhamalog.dlq.size` | gauge | signal | XLEN DLQ correspondente | `lhamalog_dlq_size` | `lhamalog_dlq_size` | DLQ size (threshold > 0) |
 
-Valores: `signal`=logs\|traces; `protocol`=http\|grpc; `outcome`=accepted\|refused\|failed.
+Valores: `signal`=logs\|traces; `protocol`=http\|grpc; `outcome`=accepted\|partial\|refused\|failed. Na aceitação parcial do OpenObserve, `accepted.bytes` é estimado proporcionalmente aos registros gravados.
 
 ## Recusas (LLT-183)
 

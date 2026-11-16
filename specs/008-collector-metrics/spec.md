@@ -48,7 +48,7 @@ Registro: **Decidido pelo Michel em 16/11/2026**.
 
 - **R1 — Binding do management address em local Docker Desktop**: default vazio (todas as interfaces) para o container Prometheus alcançar via `host.docker.internal`; em prod documentar bind `127.0.0.1` ou rede interna. **Recomendação**: adotar.
 - **R2 — Buckets do histogram de latência**: conjunto fixo SLO (ex.: 5ms–30s). **Recomendação**: `{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30}` segundos.
-- **R3 — Anonymous viewer no Grafana**: permitido **somente** no compose de observabilidade local; documentado. **Recomendação**: habilitar anonymous Viewer no local.
+- **R3 — Anonymous viewer no Grafana**: ~~habilitar anonymous Viewer no local~~ — revisto na review do BimBot (16/11/2026): **sem** acesso anônimo, login admin via `.env`, e todas as portas da stack só em `127.0.0.1`.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -116,7 +116,7 @@ Time encontra runbook, catálogo de métricas (`metricas.md`), seção no README
 ### Edge Cases
 
 - Redis indisponível no refresh de filas: manter último valor / NaN inicial; WARN rate-limited; não falhar o scrape.
-- Lote parcialmente aceito: conta records/bytes aceitos; latency outcome = accepted.
+- Lote parcialmente aceito (validação local ou recusa parcial do OpenObserve): conta só os records gravados (bytes proporcionais quando o OpenObserve não diz quais); latency outcome = `partial` (review de 16/11/2026).
 - Falha de destination após auth: latency outcome = failed; sem incremento de accepted.
 - Recusa (auth, rate, tamanho, quota, suspensão): latency outcome = refused; sem accepted.
 - Cardinalidade: tags só dos conjuntos fechados aprovados; MeterFilter remove identidades.

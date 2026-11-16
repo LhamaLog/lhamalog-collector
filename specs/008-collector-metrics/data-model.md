@@ -23,7 +23,7 @@ Valores de tag:
 
 - `signal`: `logs` \| `traces`
 - `protocol`: `http` \| `grpc`
-- `outcome`: `accepted` \| `refused` \| `failed`
+- `outcome`: `accepted` \| `partial` \| `refused` \| `failed` (`partial` incluído na review de 16/11/2026)
 
 ## QueueDepthSample
 
