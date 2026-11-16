@@ -12,6 +12,7 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 - `/actuator/prometheus` na porta de management (`MANAGEMENT_PORT`, default 9464; `MANAGEMENT_ADDRESS`, default `127.0.0.1`).
 - Métricas `lhamalog.ingestion.accepted.records` / `.bytes`, `lhamalog.ingestion.latency` (outcome `accepted`, `partial`, `refused`, `failed`) e gauges `lhamalog.queue.size` / `lhamalog.dlq.size`, sem tag de tenant.
 - Stack local Prometheus + Loki + Alloy + Grafana (`compose.observability.yaml`, `make metrics-*`), portas só em `127.0.0.1` e Grafana sem acesso anônimo. Runbook `docs/observability-runbook.md`.
+- IaC da Railway para o módulo de observabilidade (`.railway/railway.ts`, `infra/railway/`), sem deploy: Prometheus, Loki e Alloy só na rede privada.
 
 ### Adicionado (LLT-186)
 

@@ -1,0 +1,29 @@
+// Railway (LLT-187): there is no shared log file between services, so Alloy receives OTLP/HTTP logs
+// from the Collector over private networking (http://alloy.railway.internal:4318) and forwards them to Loki.
+// Labels stay low-cardinality (service_name, level); no tenant labels.
+
+otelcol.receiver.otlp "collector" {
+  http {
+    endpoint = "[::]:4318"
+  }
+
+  output {
+    logs = [otelcol.processor.batch.default.input]
+  }
+}
+
+otelcol.processor.batch "default" {
+  output {
+    logs = [otelcol.exporter.loki.default.input]
+  }
+}
+
+otelcol.exporter.loki "default" {
+  forward_to = [loki.write.railway.receiver]
+}
+
+loki.write "railway" {
+  endpoint {
+    url = sys.env("LOKI_PUSH_URL")
+  }
+}

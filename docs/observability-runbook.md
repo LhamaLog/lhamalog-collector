@@ -88,3 +88,64 @@ Os receivers OTLP são JDK HttpServer/gRPC (não Spring MVC). Painéis `http_ser
 
 - `lhamalog.ingestion.latency{outcome}`: `accepted` | `partial` | `refused` | `failed`. `partial` = parte dos registros gravada e parte rejeitada (validação local ou recusa do OpenObserve).
 - Na aceitação parcial do OpenObserve, `accepted.records` soma só os registros gravados. O OpenObserve não diz quais foram, então `accepted.bytes` é uma estimativa: bytes entregues × gravados ÷ entregues (arredondado para baixo). A cobrança continua pelo débito da reserva, não por essa métrica.
+
+## Railway (IaC preparado, nada implantado)
+
+Arquivos: `.railway/railway.ts` (Infrastructure as Code, partial `observability`) e `infra/railway/<serviço>/` (Dockerfile + config de cada serviço; contexto de build = raiz do repositório). O formato antigo `railway.json`/`railway.toml` (Config as Code) está obsoleto na Railway, não aceita serviço novo e deixa de ser lido em 01/12/2026, por isso não foi usado.
+
+**Nada foi criado nem implantado.** Implantar exige OK do Michel.
+
+### Serviços
+
+| Serviço | Imagem base | Porta | Healthcheck | Volume | Domínio público |
+|---|---|---|---|---|---|
+| `prometheus` | `prom/prometheus:v3.5.0` | 9090 | `/-/ready` (120 s) | `prometheus-data` 1 GB em `/prometheus` (retenção 7d / 900 MB) | **não** |
+| `loki` | `grafana/loki:3.5.3` | 3100 | `/ready` (300 s) | `loki-data` 2 GB em `/loki` (retenção 168 h) | **não** |
+| `alloy` | `grafana/alloy:v1.10.2` | 12345 (UI) / 4318 (OTLP HTTP) | `/-/ready` (120 s) | — | **não** |
+| `grafana` | `grafana/grafana:12.2.0` | 3000 | `/api/health` (120 s) | `grafana-data` 512 MB em `/var/lib/grafana` | só este, gerado no dashboard |
+
+Todos com restart `ON_FAILURE` (até 10 tentativas), build por `DOCKERFILE` e `watchPatterns` só da própria pasta. Branch `Development`; no ambiente `production`, `main`. `RAILWAY_RUN_UID=0` nos serviços com volume (o volume da Railway monta como root).
+
+### Variáveis
+
+| Serviço | Variável | Valor |
+|---|---|---|
+| todos | `PORT` | porta do serviço (o healthcheck da Railway usa essa porta) |
+| prometheus | `COLLECTOR_METRICS_TARGET` | `lhamalog-collector.railway.internal:9464` (nome do serviço do Collector na Railway) |
+| prometheus | `PROMETHEUS_RETENTION` | `7d` |
+| alloy | `LOKI_PUSH_URL` | `http://loki.railway.internal:3100/loki/api/v1/push` |
+| grafana | `GF_SECURITY_ADMIN_USER` | `admin` |
+| grafana | `GF_SECURITY_ADMIN_PASSWORD` | **segredo**: `preserve()` no IaC. Criar antes como variável (selada) do serviço no dashboard; nunca em arquivo |
+| grafana | `GF_AUTH_ANONYMOUS_ENABLED` / `GF_USERS_ALLOW_SIGN_UP` | `false` |
+| grafana | `GF_SECURITY_COOKIE_SECURE` | `true` (acesso só pelo domínio HTTPS) |
+| grafana | `PROMETHEUS_URL` / `LOKI_URL` | `http://prometheus.railway.internal:9090` / `http://loki.railway.internal:3100` |
+| Collector (serviço dele, fora deste IaC) | `MANAGEMENT_ADDRESS` | `::` (o default `127.0.0.1` não é alcançável por outro serviço) |
+
+### Rede privada
+
+- Prometheus, Loki e Alloy **sem** domínio público e sem TCP proxy: só `*.railway.internal`, rede privada (Wireguard) isolada por projeto e ambiente. Nunca gerar domínio para eles.
+- Loki com `auth_enabled: false` só é aceitável por isso: ninguém fora da rede privada do projeto chega nele. A porta de management do Collector (9464, sem autenticação) também nunca recebe domínio público.
+- Os serviços escutam em todas as interfaces (IPv4 e IPv6); ambientes antigos da Railway só resolvem `railway.internal` em IPv6.
+- O Grafana chega no Prometheus e no Loki pelas URLs privadas acima (datasources provisionados em `infra/railway/grafana/provisioning`, com os dashboards de `infra/local/observability/grafana/dashboards` embutidos na imagem).
+
+### Como o Collector alimentaria o módulo
+
+- **Métricas:** o Prometheus raspa `http://lhamalog-collector.railway.internal:9464/actuator/prometheus` (pull). Basta o Collector rodar com `MANAGEMENT_ADDRESS=::`.
+- **Logs:** na Railway não há arquivo de log compartilhado para o Alloy ler. O Alloy recebe logs OTLP/HTTP em `http://alloy.railway.internal:4318/v1/logs` e manda para o Loki. Falta no Collector um exportador OTLP de logs (ex.: appender OpenTelemetry do Logback) — fica como follow-up, não está nesta mudança. Enquanto isso, os logs do Collector seguem só no log da própria Railway.
+
+### Como implantar depois (com OK do Michel)
+
+1. Instalar a CLI da Railway (5.42.1 ou mais nova) e `npm install` em `.railway/` (pacote `railway` 3.17.0).
+2. `railway link` no projeto/ambiente certo.
+3. Criar a variável selada `GF_SECURITY_ADMIN_PASSWORD` no serviço `grafana` (dashboard).
+4. `railway config plan` e revisar o plano (4 serviços, 3 volumes, nada fora do grupo `Observability`).
+5. `railway config apply` (sem `--yes`).
+6. Gerar domínio público **só** para o `grafana` (porta 3000) e configurar `MANAGEMENT_ADDRESS=::` no serviço do Collector.
+
+### Custo
+
+Nada foi implantado, então não há custo agora. Na Railway a cobrança é por uso (CPU, memória, volume e tráfego de saída; tráfego na rede privada não conta como egress). São quatro serviços sempre ligados e 3,5 GB de volume: estimar no painel de uso da Railway antes de aplicar.
+
+### Validação local feita (16/11/2026)
+
+`tsc` do `railway.ts` com o pacote `railway` 3.17.0 e avaliação do programa (Development e production); `docker build` das quatro imagens; containers numa rede descartável: Prometheus, Loki, Alloy e Grafana prontos, Grafana 401 sem credencial, datasources Prometheus e Loki com health OK, dashboard provisionado, log OTLP enviado ao Alloy chegando no Loki. Containers e imagens removidos.

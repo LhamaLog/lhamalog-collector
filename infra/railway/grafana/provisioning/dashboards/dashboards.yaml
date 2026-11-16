@@ -1,0 +1,12 @@
+apiVersion: 1
+
+# Dashboards are baked into the image (not on the /var/lib/grafana volume) so a redeploy updates them.
+providers:
+  - name: lhamalog
+    orgId: 1
+    folder: LhamaLog
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana-dashboards

@@ -65,3 +65,5 @@
 - Sem métricas além das 5 Q4
 - Sem alterações no Core / TelemetryIngestedPublisher
 - [X] T023 Verificação local com containers (16/11/2026 14:20 BRT): Prometheus raspando o Collector (alvo up), Grafana com datasources/dashboard provisionados e log com `cid` no Loki — evidência em `live-check-evidence.md`. Correções achadas: gauges de fila (sem `@ConditionalOnBean`), Alloy preservando a linha completa, cadeia de segurança padrão mantendo CSRF/form login.
+- [X] T024 Railway IaC do módulo de observabilidade (16/11/2026, sem deploy): `.railway/railway.ts` (partial `observability`) + `infra/railway/{prometheus,loki,alloy,grafana}`. Prometheus/Loki/Alloy só na rede privada, Grafana sem anônimo e senha só em variável da Railway. Validado com `tsc`, `docker build` e containers locais; seção "Railway" no runbook.
+- [ ] T025 (follow-up) Exportar logs do Collector via OTLP para o Alloy na Railway e configurar `MANAGEMENT_ADDRESS=::` no serviço do Collector.
