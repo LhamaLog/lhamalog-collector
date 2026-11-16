@@ -4,7 +4,7 @@
 
 **Created**: 2026-11-11
 
-**Status**: Clarified (parcial) — 16/11/2026; D4/D5 resolvidos na sessão (2); Q13/Q14 ainda abertos
+**Status**: Clarified — 16/11/2026; D4/D5 resolvidos na sessão (2); Q13/Q14/Q15 resolvidos na sessão (3)
 
 **Input**: User description: "Aplicar limites de taxa e tamanho máximo de lote por plano (tenant), com resposta de retentativa (429/RESOURCE_EXHAUSTED) para o exporter. Taxa e tamanho por plano; sem repetir reserva de saldo da LLT-186/spec006."
 
@@ -18,7 +18,7 @@ Fatos de origem (somente leitura; não inventar valores ausentes):
 - **ADR_131 (TabelaPrecificacao, aceita, 11/10/2026)**: campos incluem `rateLimit`, mas a coluna "RateLimite" da planilha "Plano de Monetização" (aba Página1) está **vazia** para todos os planos → `rateLimit` **[PENDENTE]** no Core. Valores de runtime desta feature vêm de configuração do Collector até a tabela ser preenchida.
 - **Planilha "Plano de Monetização v4 - OpenObserve MGC" (aba Planos Ajustado, 26/10/2026)**: FREE 1 GB/mês (bloqueia ao atingir franquia, sem excedente), 1 produto, 1 membro; Starter 10 GB/mês, excedente R$ 6,00/GB, 3 produtos; Pro 100 GB/mês, excedente R$ 4,50/GB, 10 produtos; Business 500 GB/mês, excedente R$ 3,50/GB, produtos ilimitados; Enterprise 1000 GB/mês, excedente R$ 2,80/GB, ilimitados. **Não há** valores de taxa (req/s) nem de tamanho máximo de lote nas planilhas v2–v4.
 - **ADR_164 (custo do MVP)**: 2 VMs Magalu, nó único, sem HA; Redis (Streams) na VM-A junto com Core/Collector; capacidade estimada ~192 GB brutos ingeridos por mês no total (todas as contas).
-- **ADR_163 rev. 4 (Asaas, proposta)**: assinatura **SUSPENSA** bloqueia ingestão; INADIMPLENTE com menção a 15 dias de graça — comportamento de ingestão para INADIMPLENTE **[A CONFIRMAR / NEEDS CLARIFICATION]**.
+- **ADR_163 rev. 4 (Asaas, proposta)**: assinatura **SUSPENSA** bloqueia ingestão; **INADIMPLENTE** mantém acesso por `diasCarencia = 15` dias e depois vira SUSPENSA (adotado na sessão 3, Q14).
 - **ADR_108 / ADR_119**: OTLP HTTP 4318 e gRPC 4317; produto resolvido pelo token.
 - **ADR_043 / ADR_050**: upload manual 100 MB/arquivo — **fora** do escopo OTLP desta feature.
 - **Decisões do Michel em 16/11/2026 via BimBot Escola de TI**: D1–D9 (ver Clarifications).
@@ -59,10 +59,21 @@ Registro: **Decidido pelo Michel em 16/11/2026 via BimBot Escola de TI**.
 - **Q6 / D4 (Core indisponível)**: ver **Sessão 16/11/2026 (2)** — resolvido.
 - **Q7 / D9**: contadores de taxa no **Redis**.
 - **Q8 / D5 (Retry-After da taxa)**: ver **Sessão 16/11/2026 (2)** — resolvido.
-- **Q9 / D6 (SUSPENSA)**: assinatura SUSPENSA → HTTP **403** (gRPC **PERMISSION_DENIED**). **INADIMPLENTE** → **[NEEDS CLARIFICATION]** (ADR_163 menciona 15 dias de graça; não decidido).
+- **Q9 / D6 (SUSPENSA)**: assinatura SUSPENSA → HTTP **403** (gRPC **PERMISSION_DENIED**). **INADIMPLENTE** → ver Q14 (sessão 3).
 - **Q10 (observabilidade)**: não decidido pelo Michel. Decisão técnica do dev para MVP: métricas + log estruturado distinguindo taxa / tamanho / saldo / suspensão / Core fora; alerta in-app ao Dono/Admin **fora** desta entrega.
 - **Q11 / D7 (excedente)**: excedente permitido e cobrado à parte **somente** se habilitado por plano (`overageEnabled`); senão mantém o corte ao zerar da spec006. Cobrança em si **fora de escopo**.
 - **Q12 / D8 (ordem)**: **taxa primeiro**, depois tamanho, depois saldo/reserva (fluxo spec006). *(Recomendação técnica anterior era tamanho→taxa→reserva; sobrescrita pela decisão do Michel.)*
+
+### Sessão 16/11/2026 (3) — Q13, Q14, sem plano, excedente e padrão de logs
+
+Registro: **Decidido pelo Michel em 16/11/2026 via BimBot Escola de TI**.
+
+- **Q13 (Redis fora no rate limiter)**: fail-open com WARN e métrica. Mantém o comportamento já implementado.
+- **Q14 (INADIMPLENTE)**: carência de **15 dias** (ADR_163) com ingestão permitida; depois tratada **igual a SUSPENSA** (403 / PERMISSION_DENIED). Carência configurável (`lhamalog.subscription.delinquency-grace`, default 15d), contada de `delinquentSince` no `PlanSubscription`.
+- **Sem plano**: 503 com a mesma regra de 5 tentativas por lote (Retry-After 300 s; 6ª → 500/INTERNAL). Mantém o comportamento já implementado.
+- **Métrica de excedente**: segue o padrão de logs (rascunho `ADR-padrao-de-logs-v1`): INFO `event=quota.overage.authorized` com `overageBytes` e métrica `lhamalog.quota.overage` com o mesmo código.
+- **Padrão de logs** (Collector e Core): data ISO-8601 com fuso, correlation id (`X-Correlation-Id` / MDC `correlationId`), referência à função (classe.método no padrão da linha) e código do aviso (`event=<código>`) em todo WARN/ERROR. Registrado como emenda 2.1.0 da constituição dos dois repositórios.
+- **Aprovado pelo Michel em 16/11/2026 via BimBot Escola de TI** (decisões técnicas do dev submetidas a ele): (a) resposta final da 6ª tentativa com Core indisponível = **HTTP 500 / gRPC INTERNAL** sem Retry-After; (b) excedente **desligado por padrão**, liberado só pela flag por plano `overageEnabled`.
 
 ### Sessão 16/11/2026 (2) — D4/D5 confirmados
 
@@ -72,10 +83,10 @@ Registro: **Decidido pelo Michel em 16/11/2026 via BimBot Escola de TI**.
   - **Decisão técnica do dev**: identidade do lote = `reservationId` determinístico da LLT-186/`CanonicalQuotaGate` (`quota:` + SHA-256(tenant, product, domain, bytes canônicos)) — estável entre retries do exporter do mesmo lote. Contador Redis `INCR lhamalog:quota:core-unavailable:{batchKey}` com TTL `lhamalog.quota.unavailable-attempt-ttl` (default 30m). Tentativas 1..5 → 503/UNAVAILABLE + Retry-After 300; tentativa 6+ → HTTP **500** / gRPC **INTERNAL** (não retentável OTLP), sem Retry-After, mensagem `core unavailable: retry budget exhausted, batch dropped`, métrica `reason=quota_unavailable_exhausted`. **NO_PLAN** conta no orçamento (mesmo caminho 503 da spec006). Redis down no contador → 503 + Retry-After 300 sem orçamento + WARN/métrica. Core de volta → processa e apaga a chave.
 - **D5 / taxa**: cada req acima de 20/s → 429 / RESOURCE_EXHAUSTED com Retry-After **5 s** (`lhamalog.rate-limit.retry-after`). Se o tenant exceder o limite **5 vezes em 1 minuto** → **bloqueio de 5 min**; durante o bloqueio toda req → 429 com Retry-After **300 s**. A 5ª violação na janela de 60 s já responde com Retry-After 300; reqs no bloqueio **não** contam na janela de 1 s. Motivos: `rate_limit` e `rate_limit_blocked`.
 
-**Perguntas ainda abertas**:
+**Perguntas resolvidas na sessão (3)** (abaixo):
 
-- **Q13 — Redis indisponível para o rate limiter**: fail-open vs fail-closed. Recomendação técnica do dev: fail-open com métrica/WARN. Comportamento provisório configurável, marcado **[A CONFIRMAR]**.
-- **Q14 — INADIMPLENTE**: bloqueia como SUSPENSA (403), permite com graça de 15 dias (ADR_163), ou outro? **[NEEDS CLARIFICATION]**.
+- **Q13 — Redis indisponível para o rate limiter**: resolvida na sessão (3) — fail-open com WARN e métrica.
+- **Q14 — INADIMPLENTE**: resolvida na sessão (3) — carência de 15 dias, depois igual a SUSPENSA.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -163,9 +174,9 @@ Operação consegue distinguir quando taxa, tamanho, saldo, suspensão ou Core i
 
 - Tenant sem plano atribuído: mesmo caminho 503 da spec006 (Retry-After **300 s**); **conta** no orçamento de 5 tentativas (D4).
 - Assinatura SUSPENSA: 403 / PERMISSION_DENIED (D6).
-- Assinatura INADIMPLENTE: **[NEEDS CLARIFICATION: Q14]**.
+- Assinatura INADIMPLENTE: ingestão permitida durante a carência (`delinquentSince + lhamalog.subscription.delinquency-grace`, default 15 dias); no instante em que a carência termina e depois → 403 / PERMISSION_DENIED como SUSPENSA. Sem `delinquentSince` → permitido com WARN `event=subscription.delinquent.missing_since`.
 - Core indisponível na reserva: tentativas 1..5 → 503 / UNAVAILABLE + Retry-After **300 s**; tentativa 6+ → 500 / INTERNAL sem Retry-After (lote perdido). Redis do contador fora → 503/300 sem orçamento.
-- Redis indisponível para rate limit: comportamento provisório configurável (recomendação: fail-open + WARN/métrica) **[A CONFIRMAR: Q13]**.
+- Redis indisponível para rate limit: **fail-open** (requisição segue para tamanho/reserva) com WARN `event=ingestion.rate_limit.store_unavailable` e métrica (Q13).
 - Contadores de taxa com mais de uma instância do Collector: Redis compartilhado (D9) coordena o limite.
 - Logs e traces: contador compartilhado (D2).
 - Escopo: por tenant, soma de todos os produtos (D1).
@@ -185,14 +196,14 @@ Operação consegue distinguir quando taxa, tamanho, saldo, suspensão ou Core i
 - **FR-006**: Recusa por taxa MUST usar HTTP 429 e gRPC RESOURCE_EXHAUSTED com Retry-After = `lhamalog.rate-limit.retry-after` (default **5 s**). Após `violations-before-block` (default 5) violações em `violation-window` (default 60 s), o tenant MUST ser bloqueado por `block-duration` (default 300 s) com Retry-After = `block-retry-after` (default 300 s). Métricas/logs MUST usar `rate_limit` vs `rate_limit_blocked` e distinguir da 429 de saldo da spec006.
 - **FR-007**: Quando o Core estiver indisponível (ou sem plano/ciclo — caminho 503 da spec006), o Collector MUST responder 503 / UNAVAILABLE com Retry-After `lhamalog.quota.unavailable-retry-after` default **300 s**, até `unavailable-max-attempts` (default **5**) por lote (chave = reservationId determinístico). Acima do orçamento MUST responder HTTP 500 / gRPC INTERNAL sem Retry-After (`quota_unavailable_exhausted`). Saldo insuficiente permanece Retry-After **120 s**.
 - **FR-008**: Contadores de taxa MUST ser armazenados no **Redis** já usado no MVP (chaves com TTL curto; compartilhado entre instâncias).
-- **FR-009**: Assinatura **SUSPENSA** MUST bloquear ingestão com HTTP 403 / gRPC PERMISSION_DENIED. Estado **INADIMPLENTE** permanece **[NEEDS CLARIFICATION: Q14]**. Defaults de novos campos no Core: status `ATIVA`, `overageEnabled=false` (compatível com documentos legados).
+- **FR-009**: Assinatura **SUSPENSA** MUST bloquear ingestão com HTTP 403 / gRPC PERMISSION_DENIED. Assinatura **INADIMPLENTE** MUST manter a ingestão durante a carência configurável `lhamalog.subscription.delinquency-grace` (default **15 dias**, ADR_163) contada de `delinquentSince` e, a partir do fim da carência, MUST ser tratada como SUSPENSA. Defaults de novos campos no Core: status `ATIVA`, `overageEnabled=false`, `delinquentSince=null` (compatível com documentos legados).
 - **FR-010**: O sistema MUST emitir métricas e logs estruturados distinguindo recusa por tamanho, taxa, saldo, suspensão e Core indisponível. Alerta in-app ao Dono/Admin está fora desta entrega.
 - **FR-011**: A ordem de avaliação MUST ser **taxa → tamanho → reserva de saldo (spec006)**.
 - **FR-012**: Esta feature MUST NOT reimplementar reserva de saldo, refund ou SALDO_BAIXO da spec006/LLT-186 (apenas estende o contrato de reserva para SUSPENSA e `overageEnabled`).
 - **FR-013**: Excedente além da franquia MUST ser permitido somente quando `overageEnabled=true` na assinatura/plano; bytes excedentes MUST ser registrados separadamente no Core. Cobrança/faturamento do excedente está fora de escopo. Sem a flag, mantém-se o corte ao zerar da spec006.
 - **FR-014**: Respostas de recusa MUST ser distinguíveis entre tamanho (413), taxa (429 + `rate_limit`), bloqueio de taxa (429 + `rate_limit_blocked`), saldo (429 + Retry-After 120), suspensão (403), Core indisponível retentável (503) e orçamento Core esgotado (500/INTERNAL).
 - **FR-015**: Os limites desta feature MUST aplicar-se aos canais OTLP HTTP e gRPC já existentes (logs e traces), **após** autenticação por token Bearer (tenant conhecido).
-- **FR-016**: Redis indisponível no rate limiter MUST seguir política configurável provisória (recomendação: fail-open + métrica/WARN) marcada **[A CONFIRMAR: Q13]**; a escolha final aguarda Michel.
+- **FR-016**: Redis indisponível no rate limiter MUST falhar aberto (fail-open): a requisição não é recusada por taxa, e o Collector MUST emitir WARN `event=ingestion.rate_limit.store_unavailable` e a métrica correspondente (Q13).
 - **FR-017**: A medição do tamanho de aplicação (5 MB) MUST usar o tamanho do **payload decodificado/descomprimido** (alinhado ao teto global atual), aplicada **depois** da taxa e **antes** da reserva, em HTTP e gRPC.
 
 ### Key Entities
@@ -200,7 +211,7 @@ Operação consegue distinguir quando taxa, tamanho, saldo, suspensão ou Core i
 - **Limite de taxa do tenant**: teto de 20 req/s em janela fixa de 1 s, escopo tenant, contador Redis compartilhado logs+traces.
 - **Limite de tamanho de lote de aplicação**: 5 MB por requisição OTLP; limitado superiormente pelo teto global (64 MB).
 - **Contador de taxa**: chave Redis por tenant e segundo epoch; decide aceite ou 429.
-- **PlanSubscription (Core)**: passa a incluir `status` (ATIVA / SUSPENSA / INADIMPLENTE) e `overageEnabled` (boolean).
+- **PlanSubscription (Core)**: passa a incluir `status` (ATIVA / SUSPENSA / INADIMPLENTE), `overageEnabled` (boolean, default `false`) e `delinquentSince` (instante em que ficou INADIMPLENTE; opcional).
 - **Decisão de ingestão**: resultado após autenticação — taxa, tamanho, (depois) saldo/suspensão/excedente, destino/fila — com classe de erro distinta por motivo.
 
 ## Success Criteria *(mandatory)*
@@ -240,9 +251,9 @@ Operação consegue distinguir quando taxa, tamanho, saldo, suspensão ou Core i
 - spec006/LLT-186 para reserva de saldo e ordem pós-tamanho.
 - Core `PlanSubscription` + `QuotaReservationService` / `UsageReservationsController` para status e `overageEnabled`.
 
-## Perguntas ainda abertas
+## Perguntas (histórico)
 
 | Id | Status | Pergunta |
 |----|--------|----------|
-| Q13 | **[A CONFIRMAR]** | Redis down no rate limiter — fail-open (recomendado) vs fail-closed |
-| Q14 | **[NEEDS CLARIFICATION]** | Comportamento de ingestão para assinatura INADIMPLENTE |
+| Q13 | Respondida (sessão 3) | Redis down no rate limiter — fail-open com WARN e métrica |
+| Q14 | Respondida (sessão 3) | INADIMPLENTE — carência de 15 dias, depois igual a SUSPENSA |

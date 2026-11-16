@@ -54,6 +54,8 @@ Legenda de status: **Respondida** | **Parcial** | **Aberta**.
 
 **Nota de escopo:** caminho Core/sem plano da spec006; saldo insuficiente permanece Retry-After 120.
 
+**Aprovado pelo Michel em 16/11/2026 via BimBot Escola de TI:** a resposta final não-retentável da 6ª tentativa com o Core indisponível é **HTTP 500 / gRPC INTERNAL** (sem Retry-After), escolhida porque os exporters OTLP não retentam esses códigos.
+
 ---
 
 ## Q7 — Armazenamento dos contadores de taxa — **Respondida**
@@ -70,11 +72,11 @@ Legenda de status: **Respondida** | **Parcial** | **Aberta**.
 
 ---
 
-## Q9 — Aplicação a sem plano / FREE / ilimitado / SUSPENSA / INADIMPLENTE — **Parcial**
+## Q9 — Aplicação a sem plano / FREE / ilimitado / SUSPENSA / INADIMPLENTE — **Respondida**
 
 **Decisão (Michel, 16/11/2026 / D6):** assinatura **SUSPENSA** → HTTP **403** (gRPC **PERMISSION_DENIED**).
 
-**Ainda aberto:** **INADIMPLENTE** → ver **Q14**. Sem plano / FREE / ilimitado: sem plano segue spec006 (503); FREE e pagos usam os mesmos 20 req/s e 5 MB no MVP (config Collector); `unlimitedUsage` da spec006 não isenta taxa/tamanho.
+**INADIMPLENTE** → ver **Q14** (respondida). **Sem plano** (decidido pelo Michel em 16/11/2026 via BimBot Escola de TI): segue o caminho 503 da spec006 com a **mesma regra de 5 tentativas** (Retry-After 300 s; 6ª → 500/INTERNAL). FREE e pagos usam os mesmos 20 req/s e 5 MB no MVP (config Collector); `unlimitedUsage` da spec006 não isenta taxa/tamanho.
 
 ---
 
@@ -96,7 +98,7 @@ Michel não decidiu. **Decisão técnica do dev (MVP):** métricas + log estrutu
 
 ---
 
-## Q13 — Redis indisponível para o rate limiter — **Aberta** [A CONFIRMAR]
+## Q13 — Redis indisponível para o rate limiter — **Respondida**
 
 **Pergunta (nova, 16/11/2026):** Se o Redis do rate limit não responder, o Collector falha aberto (aceita a requisição quanto à taxa, com métrica/WARN) ou falha fechado (recusa)?
 
@@ -110,11 +112,11 @@ Michel não decidiu. **Decisão técnica do dev (MVP):** métricas + log estrutu
 
 **Recomendação técnica do dev:** **A** — publicação em Redis Streams falharia de qualquer modo se o Redis estiver fora; fail-open evita 429 falso e deixa a falha aparecer no sink/stream.
 
-**Impacto se não decidido:** implementação usa A como default provisório marcado [A CONFIRMAR].
+**Decisão:** **Decidido pelo Michel em 16/11/2026 via BimBot Escola de TI**: opção **A** — fail-open com WARN (`event=ingestion.rate_limit.store_unavailable`) e métrica. Mantém o comportamento já implementado.
 
 ---
 
-## Q14 — Assinatura INADIMPLENTE — **Aberta** [NEEDS CLARIFICATION]
+## Q14 — Assinatura INADIMPLENTE — **Respondida**
 
 **Pergunta (nova, 16/11/2026):** Com assinatura INADIMPLENTE, a ingestão bloqueia como SUSPENSA (403), permanece ativa durante graça de 15 dias (ADR_163), ou outro comportamento?
 
@@ -128,4 +130,13 @@ Michel não decidiu. **Decisão técnica do dev (MVP):** métricas + log estrutu
 
 **Recomendação técnica do dev:** **B** alinhada ao ADR_163, mas **não adotar sem Michel** — campo `status=INADIMPLENTE` pode existir no modelo com comportamento provisório documentado ou tratado como ATIVA até confirmação (explicitar na implementação).
 
-**Impacto se não decidido:** modelo Core inclui o enum; comportamento de ingestão para INADIMPLENTE fica [NEEDS CLARIFICATION] / tarefa bloqueada ou trata como ATIVA provisoriamente com flag.
+**Decisão:** **Decidido pelo Michel em 16/11/2026 via BimBot Escola de TI**: opção **B** — INADIMPLENTE mantém a ingestão durante a **carência de 15 dias** (ADR_163, `Assinatura.diasCarencia`), contada a partir de `delinquentSince`; depois é tratada **igual a SUSPENSA** (403 / PERMISSION_DENIED). Decisão técnica do dev: carência configurável em `lhamalog.subscription.delinquency-grace` (default 15d); sem `delinquentSince` registrado, a ingestão segue permitida com WARN `event=subscription.delinquent.missing_since` (conservador; o preenchimento da data é do fluxo de pagamento/Asaas, fora desta spec).
+
+
+---
+
+## Q15 — Métrica de excedente e padrão de logs — **Respondida**
+
+**Decisão:** **Decidido pelo Michel em 16/11/2026 via BimBot Escola de TI**: a métrica de excedente segue o **padrão de logs do LhamaLog** (rascunho de ADR `ADR-padrao-de-logs-v1`, emenda 2.1.0 da constituição): ao autorizar reserva com `overageBytes > 0`, o Core registra INFO `event=quota.overage.authorized | ... | tenantId= productId= reservationId= overageBytes=` e incrementa a métrica com o mesmo código (`lhamalog.quota.overage`), sem tag de tenant (cardinalidade baixa).
+
+**Aprovado pelo Michel em 16/11/2026 via BimBot Escola de TI:** o excedente fica **desligado por padrão** e só é liberado pela flag por plano (`overageEnabled=false` por default; documentos legados lidos como `false`).

@@ -62,3 +62,12 @@ Arquivo de checkpoint para retomada. Horários em America/Sao_Paulo.
 - Collector (`mvnw.cmd -B verify`, worktree `lhamalog-collector-llt183`): **279 testes, 0 falhas, 0 erros, 0 ignorados — exit 0**.
 - Core (`mvnw.cmd -B verify` com Mongo 8.0.34 descartável na porta 27019, removido ao final): **87 testes, 1 falha** em `CompanyRegistrationHttpTests.adminDeletesRegistrationAndMemberCannot` (esperado 409, veio 200). A mesma falha ocorre no `origin/Development` puro (`a3b2e64`, sem as mudanças da LLT-183) — falha pré-existente do módulo de empresa (LLT-175), não relacionada a esta feature. Testes da LLT-183 no Core passam.
 - T039 fica aberta até o verify do Core ficar verde. T038 (cenários do quickstart ponta a ponta) e T040 (docs/runbook) seguem abertas.
+
+
+## Checkpoint 16/11/2026 01:50 — sessão 3 (Q13, Q14, padrão de logs)
+
+- Core commitado e enviado com aprovação do Michel apesar da falha conhecida da LLT-175: `4c3864f`, `a820eea`.
+- Q13 (fail-open), sem plano (5 tentativas) e excedente desligado por padrão: mantidos, sem mudança de código. 500/INTERNAL na 6ª tentativa aprovado pelo Michel.
+- Q14 implementado no Core (carência de 15 dias via `delinquentSince` + `lhamalog.subscription.delinquency-grace`).
+- Padrão de logs aplicado no escopo da LLT-183 nos dois repositórios (T045/T046); demais logs e workers ficam em T047–T049; T050 é pergunta ao Michel.
+- Verify às 01:48 (BRT): Collector **292 testes, 0 falhas, 0 erros, 0 ignorados** (exit 0); Core **99 testes, 1 falha** (`CompanyRegistrationHttpTests.adminDeletesRegistrationAndMemberCannot`, 409 esperado / 200 recebido — LLT-175, pré-existente, registrada no Jira). Mongo descartável removido. Linhas de log conferidas no novo formato (`2026-11-16T01:46:54.436-03:00  INFO [lhamalog-core] [cid=none] [main] ...`).

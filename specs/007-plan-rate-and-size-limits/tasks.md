@@ -7,7 +7,7 @@
 
 **Tags**: cada tarefa indica **Collector** ou **Core**. Caminhos Core usam `../lhamalog-core-llt183/`.
 
-**Bloqueios**: `[BLOQUEADA: A CONFIRMAR]` = Q13/Q14 (T042, T044). D4/D5 resolvidos → T041/T043 feitos na Phase C1b.
+**Bloqueios**: nenhum. Q13/Q14 respondidas pelo Michel em 16/11/2026 (sessão 3) → T042/T044 feitas. D4/D5 resolvidos → T041/T043 feitos na Phase C1b.
 
 ## Fase 1: Setup
 
@@ -145,12 +145,22 @@
 ## Fase 8: Polimento e confirmações
 
 - [ ] T038 [P] **Collector** Executar cenários de `quickstart.md` (taxa, tamanho, ordem, SUSPENSA, overage, Core fora) e registrar evidência em `specs/007-plan-rate-and-size-limits/`
-- [ ] T039 [P] **Collector** / **Core** Rodar `.\mvnw.cmd verify` nos dois worktrees e anotar resultado em `progress-notes.md`
+- [X] T039 [P] **Collector** / **Core** `mvnw.cmd verify` em 16/11/2026 01:48 (BRT): Collector **292 testes, 0 falhas**; Core **99 testes, 1 falha** conhecida e pré-existente da LLT-175 (`CompanyRegistrationHttpTests.adminDeletesRegistrationAndMemberCannot`), aceita pelo Michel; detalhes em `progress-notes.md`
 - [ ] T040 [P] **Collector** Atualizar docs de runbook/usage se existirem em `docs/` (sem segredos; pt-BR)
 - [X] T041 **Collector** D5 confirmado (16/11 sessão 2): `retry-after=5s`; violações 5/60s → bloqueio 5 min com `block-retry-after=300s`; Lua atômica; métricas `rate_limit` / `rate_limit_blocked`; testes Redis + HTTP/gRPC atualizados
-- [ ] T042 [BLOQUEADA: A CONFIRMAR] **Collector** Ajustar política Redis-down quando Michel confirmar Q13
+- [X] T042 **Collector** Q13 confirmado (16/11 sessão 3): fail-open com WARN `event=ingestion.rate_limit.store_unavailable` e métrica — comportamento de T017 mantido, sem mudança de código
 - [X] T043 **Collector** D4 confirmado (16/11 sessão 2): orçamento 5 tentativas/lote via `reservationId` determinístico; Redis `core-unavailable:{batchKey}`; 6ª → 500/INTERNAL; NO_PLAN conta; Redis erro → 503/300 sem orçamento; testes BatchIngestion + Redis tracker
-- [ ] T044 [BLOQUEADA: A CONFIRMAR] **Core** Ajustar comportamento INADIMPLENTE quando Michel confirmar Q14
+- [X] T044 **Core** Q14 confirmado (16/11 sessão 3): `PlanSubscription.delinquentSince` + `lhamalog.subscription.delinquency-grace` (default 15d, `SubscriptionProperties`); INADIMPLENTE dentro da carência → permitido (INFO `subscription.delinquent.in_grace`); a partir do fim → SUSPENDED/403 (WARN `subscription.delinquent.grace_expired`); sem data → permitido com WARN `subscription.delinquent.missing_since`; `Clock` injetável; testes em `PlanSubscriptionTest`, `SubscriptionPropertiesTest`, `QuotaReservationServiceTest`
+
+### Padrão de logs (decidido pelo Michel em 16/11/2026; rascunho `ADR-padrao-de-logs-v1`; constituição 2.1.0, princípio VI)
+
+- [X] T045 **Collector** Aplicar o padrão no escopo da LLT-183: `logging.pattern.*` com data ISO-8601 + fuso, `cid` e `classe.método`; `logging/CorrelationId` (+ `propagate` para o executor de reserva/sanitização); `X-Correlation-Id` no OTLP/HTTP; `CorrelationIdServerInterceptor` no OTLP/gRPC; `HttpQuotaReservationClient` envia `X-Correlation-Id` ao Core; logs da LLT-183 no formato `event=<código> | aviso | k=v`; testes `CorrelationIdTest`, `OtlpHttpCorrelationIdTest`, `CorrelationIdServerInterceptorTest`, `HttpQuotaReservationClientTest`
+- [X] T046 **Core** Aplicar o padrão no escopo da LLT-183: `logging.pattern.*`; `logging/CorrelationIdFilter` (maior precedência, antes do Spring Security) com `X-Correlation-Id` entrada/saída; logs da reserva no formato `event=`; excedente com INFO `event=quota.overage.authorized` + métricas `lhamalog.quota.overage` / `lhamalog.quota.overage.bytes` (tag só `productId`); testes `CorrelationIdFilterTest`, `QuotaReservationServiceTest`
+- [ ] T047 [P] **Collector** (acompanhamento) Converter ao formato `event=` os demais logs fora do padrão: `BatchIngestion` (entrega ao destino, release/refund), `OtlpHttpServer`/`OtlpGrpcServer` (start/stop/falha inesperada), `MongoProductTokenStore`, `AbstractStreamPublisher`, `CoreAuthenticationProvider`, `CoreUsageFactsClient`, `UsageOutboxWorker`, `UsageOutboxObservability`, `UsageAcceptanceReconciler`, `RefundOutboxWorker`, `UsageRedisStartupValidator`
+- [ ] T048 [P] **Collector** (acompanhamento) Gerar correlation id por execução/item em `UsageOutboxWorker`, `RefundOutboxWorker`, `UsageAcceptanceReconciler` e nas retentativas assíncronas de `AbstractStreamPublisher`
+- [ ] T049 [P] **Core** (acompanhamento) Converter ao formato `event=` os logs de `LowBalanceNotificationService` e `UsageFactsSecurityConfiguration`, e gerar correlation id nos agendadores do Core
+- [ ] T050 **Collector** (pergunta ao Michel) Decidir se o `correlationId` do metadata dos streams (`TelemetryIngestedPublisher`, hoje UUID novo por publicação) passa a reutilizar o correlation id da requisição; muda a semântica consumida pelo Finder
+- [ ] T051 **Docs** Linha de inicialização da ADR_149 (`StartupLogger` nos dois repos) segue igual; apenas sai no novo formato de linha — revisar READMEs (seção Log de inicialização) quando a ADR for publicada
 
 ---
 
