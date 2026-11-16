@@ -9,6 +9,7 @@ import br.com.lhamalog.collector.ingestion.otlp.auth.BearerToken;
 import br.com.lhamalog.collector.ingestion.otlp.domain.IngestionDecision;
 import br.com.lhamalog.collector.ingestion.otlp.http.OtlpHttpStatusMapper.HttpOutcome;
 import br.com.lhamalog.collector.ingestion.otlp.http.OtlpHttpStatusMapper.Signal;
+import br.com.lhamalog.collector.logging.CorrelationId;
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.Message;
 import com.sun.net.httpserver.HttpExchange;
@@ -170,17 +171,25 @@ public class OtlpHttpServer implements SmartLifecycle {
 	}
 
 	private void handle(HttpExchange exchange) throws IOException {
-		if (!inFlight.tryAcquire()) {
-			try (exchange) {
-				write(exchange, OtlpHttpStatusMapper.overloaded(), responseType(exchange));
-			}
-			return;
-		}
+		String correlationId = CorrelationId.resolve(exchange.getRequestHeaders().getFirst(CorrelationId.HEADER));
+		CorrelationId.put(correlationId);
+		exchange.getResponseHeaders().set(CorrelationId.HEADER, correlationId);
 		try {
-			dispatch(exchange);
+			if (!inFlight.tryAcquire()) {
+				try (exchange) {
+					write(exchange, OtlpHttpStatusMapper.overloaded(), responseType(exchange));
+				}
+				return;
+			}
+			try {
+				dispatch(exchange);
+			}
+			finally {
+				inFlight.release();
+			}
 		}
 		finally {
-			inFlight.release();
+			CorrelationId.clear();
 		}
 	}
 

@@ -98,7 +98,9 @@ public final class RedisRateLimiter implements TenantRateLimiter {
 			return Verdict.ALLOWED;
 		}
 		catch (RuntimeException ex) {
-			log.warn("Redis rate-limit check failed for key pattern {}*: {}", KEY_PREFIX, ex.toString());
+			log.warn(
+					"event=ingestion.rate_limit.store_unavailable | Redis rate-limit check failed | keyPrefix={} error={}",
+					KEY_PREFIX, ex.toString());
 			return onStoreUnavailable();
 		}
 	}

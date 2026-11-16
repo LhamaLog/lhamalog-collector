@@ -3,6 +3,7 @@ package br.com.lhamalog.collector.quota;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import br.com.lhamalog.collector.logging.CorrelationId;
 import br.com.lhamalog.collector.usage.core.CoreAuthenticationProvider;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
@@ -23,6 +24,7 @@ class HttpQuotaReservationClientTest {
 	private final AtomicReference<String> responseBody = new AtomicReference<>("{\"outcome\":\"AUTHORIZED\"}");
 	private final AtomicReference<String> serviceToken = new AtomicReference<>();
 	private final AtomicReference<String> authorization = new AtomicReference<>();
+	private final AtomicReference<String> correlationIdHeader = new AtomicReference<>();
 	private volatile long responseDelayMillis;
 
 	@BeforeEach
@@ -34,6 +36,7 @@ class HttpQuotaReservationClientTest {
 
 	@AfterEach
 	void stop() {
+		CorrelationId.clear();
 		server.stop(0);
 	}
 
@@ -44,6 +47,15 @@ class HttpQuotaReservationClientTest {
 		assertThat(result).isEqualTo(QuotaReservationClient.ReservationOutcome.AUTHORIZED);
 		assertThat(serviceToken.get()).isEqualTo("service-token");
 		assertThat(authorization.get()).isNull();
+		assertThat(correlationIdHeader.get()).isNull();
+	}
+
+	@Test
+	void reserveSendsCorrelationIdWhenMdcHasValue() {
+		CorrelationId.put("outbound-cid-9");
+		assertThat(client(Duration.ofSeconds(1)).reserve(request()))
+				.isEqualTo(QuotaReservationClient.ReservationOutcome.AUTHORIZED);
+		assertThat(correlationIdHeader.get()).isEqualTo("outbound-cid-9");
 	}
 
 	@Test
@@ -137,6 +149,7 @@ class HttpQuotaReservationClientTest {
 	private void respond(HttpExchange exchange) throws java.io.IOException {
 		serviceToken.set(exchange.getRequestHeaders().getFirst("X-LhamaLog-Service-Token"));
 		authorization.set(exchange.getRequestHeaders().getFirst("Authorization"));
+		correlationIdHeader.set(exchange.getRequestHeaders().getFirst(CorrelationId.HEADER));
 		if (responseDelayMillis > 0) {
 			try {
 				Thread.sleep(responseDelayMillis);

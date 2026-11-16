@@ -34,17 +34,20 @@ public final class IngestionObservability {
 
 	public void refused(String reason) {
 		increment("lhamalog.ingestion.refused", reason);
-		log.info("OTLP ingestion refused reason={}", reason);
+		log.info("event=ingestion.refused | OTLP ingestion refused | reason={}", reason);
 	}
 
 	public void rateLimitStoreUnavailable() {
 		increment("lhamalog.ingestion.refused", REASON_RATE_LIMIT_STORE_UNAVAILABLE);
-		log.warn("OTLP rate-limit store unavailable reason={}", REASON_RATE_LIMIT_STORE_UNAVAILABLE);
+		log.warn(
+				"event=ingestion.rate_limit.store_unavailable | OTLP rate-limit store unavailable | reason={}",
+				REASON_RATE_LIMIT_STORE_UNAVAILABLE);
 	}
 
 	public void quotaUnavailableAttemptStoreUnavailable() {
 		increment("lhamalog.ingestion.refused", REASON_QUOTA_UNAVAILABLE_ATTEMPT_STORE_UNAVAILABLE);
-		log.warn("OTLP Core-unavailable attempt store unavailable reason={}",
+		log.warn(
+				"event=quota.core_unavailable.attempt_store_unavailable | OTLP Core-unavailable attempt store unavailable | reason={}",
 				REASON_QUOTA_UNAVAILABLE_ATTEMPT_STORE_UNAVAILABLE);
 	}
 

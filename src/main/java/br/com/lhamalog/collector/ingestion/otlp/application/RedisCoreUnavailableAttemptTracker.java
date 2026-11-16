@@ -68,7 +68,9 @@ public final class RedisCoreUnavailableAttemptTracker implements CoreUnavailable
 			return new CoreUnavailableAttemptResult.WithinBudget(count, retryAfterSeconds);
 		}
 		catch (RuntimeException ex) {
-			log.warn("Redis Core-unavailable attempt counter failed for key prefix {}: {}", KEY_PREFIX, ex.toString());
+			log.warn(
+					"event=quota.core_unavailable.attempt_store_unavailable | Redis Core-unavailable attempt counter failed | keyPrefix={} error={}",
+					KEY_PREFIX, ex.toString());
 			return onStoreError();
 		}
 	}
@@ -82,7 +84,9 @@ public final class RedisCoreUnavailableAttemptTracker implements CoreUnavailable
 			redis.delete(KEY_PREFIX + batchKey);
 		}
 		catch (RuntimeException ex) {
-			log.warn("Could not clear Core-unavailable attempt key for batch: {}", ex.toString());
+			log.warn(
+					"event=quota.core_unavailable.attempt_clear_error | Could not clear Core-unavailable attempt key for batch | error={}",
+					ex.toString());
 		}
 	}
 

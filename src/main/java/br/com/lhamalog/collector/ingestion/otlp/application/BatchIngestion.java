@@ -8,6 +8,7 @@ import br.com.lhamalog.collector.ingestion.otlp.domain.IngestionDecision;
 import br.com.lhamalog.collector.ingestion.otlp.ratelimit.TenantRateLimiter;
 import br.com.lhamalog.collector.ingestion.otlp.sink.SinkRejectedException;
 import br.com.lhamalog.collector.ingestion.otlp.sink.SinkUnavailableException;
+import br.com.lhamalog.collector.logging.CorrelationId;
 import br.com.lhamalog.collector.quota.ReservationCorrelation;
 import com.google.protobuf.Message;
 import java.util.List;
@@ -122,9 +123,10 @@ final class BatchIngestion {
 		String reservationId = null;
 		if (quota != null) {
 			CompletableFuture<QuotaGate.Reservation> reservationFuture = CompletableFuture.supplyAsync(
-					() -> quota.reserve(valid.tenantId(), valid.productId(), request, eligible), SANITIZATION_EXECUTOR);
+					CorrelationId.propagate(() -> quota.reserve(valid.tenantId(), valid.productId(), request, eligible)),
+					SANITIZATION_EXECUTOR);
 			CompletableFuture<List<T>> sanitizerFuture = CompletableFuture.supplyAsync(
-					() -> sanitizer.sanitize(request, eligible), SANITIZATION_EXECUTOR);
+					CorrelationId.propagate(() -> sanitizer.sanitize(request, eligible)), SANITIZATION_EXECUTOR);
 			QuotaGate.Reservation reservation;
 			try {
 				reservation = reservationFuture.get(SANITIZATION_TIMEOUT_SECONDS, TimeUnit.SECONDS);
@@ -245,19 +247,22 @@ final class BatchIngestion {
 		return switch (result) {
 			case CoreUnavailableAttemptResult.WithinBudget within -> {
 				limits.observability().refused(IngestionObservability.REASON_QUOTA_UNAVAILABLE);
-				log.warn("Core unavailable tenantId={} productId={} attempt={}", tenantId, productId, within.attempt());
+				log.warn(
+						"event=quota.core_unavailable.retry | Core unavailable | tenantId={} productId={} attempt={}",
+						tenantId, productId, within.attempt());
 				yield new IngestionDecision.QuotaUnavailable(within.retryAfterSeconds());
 			}
 			case CoreUnavailableAttemptResult.Exhausted exhausted -> {
 				limits.observability().refused(IngestionObservability.REASON_QUOTA_UNAVAILABLE_EXHAUSTED);
 				log.warn(
-						"core unavailable: retry budget exhausted, batch dropped tenantId={} productId={} attempt={}",
+						"event=quota.core_unavailable.exhausted | core unavailable: retry budget exhausted, batch dropped | tenantId={} productId={} attempt={}",
 						tenantId, productId, exhausted.attempt());
 				yield new IngestionDecision.QuotaUnavailableExhausted();
 			}
 			case CoreUnavailableAttemptResult.StoreError storeError -> {
 				limits.observability().refused(IngestionObservability.REASON_QUOTA_UNAVAILABLE);
-				log.warn("Core unavailable attempt store error tenantId={} productId={}; plain 503 without budget",
+				log.warn(
+						"event=quota.core_unavailable.attempt_store_error | Core unavailable attempt store error; plain 503 without budget | tenantId={} productId={}",
 						tenantId, productId);
 				yield new IngestionDecision.QuotaUnavailable(limits.unavailableRetryAfterSeconds());
 			}

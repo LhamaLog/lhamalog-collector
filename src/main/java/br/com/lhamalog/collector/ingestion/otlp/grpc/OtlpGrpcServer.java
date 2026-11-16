@@ -65,11 +65,12 @@ public class OtlpGrpcServer implements SmartLifecycle {
 			return;
 		}
 		BearerTokenInterceptor auth = new BearerTokenInterceptor();
+		CorrelationIdServerInterceptor correlation = new CorrelationIdServerInterceptor();
 		try {
 			server = NettyServerBuilder.forAddress(new InetSocketAddress(host, port))
 				.maxInboundMessageSize(maxMessageBytes)
-				.addService(ServerInterceptors.intercept(new LogsEndpoint(), auth))
-				.addService(ServerInterceptors.intercept(new TracesEndpoint(), auth))
+				.addService(ServerInterceptors.intercept(new LogsEndpoint(), correlation, auth))
+				.addService(ServerInterceptors.intercept(new TracesEndpoint(), correlation, auth))
 				.build()
 				.start();
 		}
