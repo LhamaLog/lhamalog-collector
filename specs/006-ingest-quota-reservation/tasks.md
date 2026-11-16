@@ -109,6 +109,26 @@ minutos expira e estorna uma única vez.
 - [X] T051 [P] Atualizar `docs/usage-measurement.md` e `specs/006-ingest-quota-reservation/` com comportamento efetivamente entregue, sem apagar o histórico da spec 005.
 - [X] T052 [P] Atualizar métricas, logs sanitizados e runbook em `docs/` para reserva, recusa, expiração, refund, `SALDO_BAIXO` e falha do Core.
 
+## Revisão 2 (11/11/2026) — pendências
+
+### Corrigidos nesta rodada
+
+- [X] T074 [HIGH] **Collector** Não reembolsar reserva quando o destino aceita parcialmente (`SinkRejectedException.acceptedCount > 0`); refund só se `acceptedCount == 0`. Arquivos: `BatchIngestion.java`, `BatchIngestionQuotaTest.java`, docs/spec006.
+- [X] T075 [MEDIUM] **Collector** Reenvio de lote `ABANDONED` não deve 503 por evidência Redis antiga: `pendingReopened` com chave `usage:fact:{id}:reopen:{epoch}` (fence da chave original preservado). Arquivos: `UsageOutboxItem.java`, `MongoUsageOutboxRepository.java`, testes de sink/aceitação; nota em T063.
+- [X] T076 [MEDIUM] **Core** `confirm` não retorna 5xx se a publicação `SALDO_BAIXO` falhar após o débito (outbox dura; retry agendado; WARN sem métrica — módulo usage sem MeterRegistry). Arquivos: `LowBalanceNotificationService.java`, testes.
+- [X] T077 [LOW] **Collector** Reduzir INFO por tick/item do worker de usage/refund para DEBUG (`UsageOutboxWorker`, `CoreUsageFactsClient`); manter INFO de boot e WARN/ERROR.
+- [X] T085 [HIGH] **Collector** Falha do sink **depois** da publicação no stream de leitura (ex.: `usageRecorder.accept` falha após evidência `DONE`) não reembolsa mais a reserva: `SinkUnavailableException.afterPublish` marca `publishedBeforeFailure`, e `BatchIngestion` só reembolsa `SINK_UNAVAILABLE` quando nada foi publicado. Resposta continua 503 + `Retry-After: 120`; o reenvio cai na deduplicação (`DONE`). Arquivos: `SinkUnavailableException.java`, `PublishingLogsSink.java`, `PublishingTracesSink.java`, `BatchIngestion.java`, `BatchIngestionQuotaTest`, `PublishingLogsSinkTest`.
+
+### Pendentes (sem implementação nesta rodada)
+
+- [ ] T078 [MEDIUM] **Collector** Corrigir corrida entre outbox de refund pendente e reenvio do mesmo lote (mesmo `reservationId` determinístico): um refund atrasado pode estornar débito de entrega já bem-sucedida no retry. Exige cancelamento/CAS coordenado ou tentativa com nonce — não é correção barata.
+- [ ] T079 [MEDIUM] **Core** Escritas multi-documento não transacionais (reserva/débito/refund/ledger): documentar e, se necessário, adotar transações Mongo (replica set) ou compensações adicionais. Hoje a idempotência/CAS por documento mitiga, mas não elimina janelas.
+- [ ] T080 [MEDIUM] **Collector** Pool fixo de 4 threads com timeout 5 s (`SANITIZATION_EXECUTOR` em `BatchIngestion`): sob carga, saturação pode virar `503 QuotaUnavailable` mesmo com Core saudável. Avaliar sizing/isolamento.
+- [ ] T081 [LOW] **Collector** Tornar explícito e evoluir a sanitização real além do gancho `BatchSanitizer.identity()` (já documentado como provisório na spec006).
+- [ ] T082 [LOW] **Collector** Classes E2E em `src/main` (`E2eFaultInjectingBatchStore`, `QuotaE2eProperties`) referenciadas por `OtlpReceiverConfiguration` / scripts `spring-boot:run` — não mover para `src/test` sem redesenhar o perfil E2E.
+- [ ] T083 [LOW] **Core** `UsageFactRequest` (DTO de API) ainda circula como modelo de domínio/persistência (`UsageFactService`/`StoredUsageFact`); completar separação além do mapper T060.
+- [ ] T084 [LOW] **Collector** Revisar métrica/estado para suspensão 4xx na outbox de usage se ainda houver caminho sem `lhamalog.usage.outbox.suspended` (T066 cobre o worker; validar outros 4xx).
+
 ## Dependências e ordem de execução
 
 1. T007–T014 escrevem testes; T015 estabelece contrato, persistência, cliente, configuração e observabilidade.

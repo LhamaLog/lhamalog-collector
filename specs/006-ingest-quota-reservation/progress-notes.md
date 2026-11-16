@@ -11,3 +11,11 @@ Arquivo de checkpoint para retomada após interrupção. Horários em America/Sa
 - 11/11/2026 08:40 — E2E complementar concluído (lote acima do saldo recusado inteiro; replays diretos confirm/refund 204; teardown ok). Lançado agent (modelo auto) para T025/T040/T052.
 - 11/11/2026 08:48 — T025/T040/T052/T049 concluídos: `QuotaReservationCoreIntegrationTest` (1), `QuotaReservationRestartIntegrationTest` (2), docs/runbook; `.\mvnw.cmd -q verify` Collector verde.
 - 11/11/2026 09:02 — T025/T040/T052 concluídas; verify final dos dois repositórios executado (ver relatório); Mongo descartável removido. Entrega pronta, sem commit/push.
+
+
+## Checkpoint 15/11/2026 20:58 — revisão 2 da LLT-186
+
+- Retomada após queda do Avell (11/11 ~20:50). Execução CLI de 11/11 concluída; notas em `review-round-2.md`.
+- Feitos: T074 (parcial sem refund), T075 (reenvio ABANDONED com chave nova), T076 (Core: confirm não falha por SALDO_BAIXO), T077 (logs DEBUG), T085 (falha pós-publicação sem refund).
+- Pendentes registrados: T078–T084.
+- Próximo: `mvnw.cmd verify` nos dois repositórios (Mongo descartável 27019 para o Core) e atualização dos rascunhos de PR.

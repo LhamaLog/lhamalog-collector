@@ -26,9 +26,10 @@ ilustrativos e consistentes com as regras; não são medição de produção.
 8. Reenvio idêntico (mesmo conteúdo imutável do lote) dentro de 7 dias **não** conta de
    novo. Um lote **novo e diferente** conta inteiro, mesmo que traga registros já medidos
    em outro lote; não há deduplicação por `recordId`.
-9. Um lote **ABANDONED** nunca foi contado. O reenvio pode ser reaberto e medido **uma**
-   vez. Depois de 7 dias (RF-012), um `SYNCED` (ou `ABANDONED` terminal não reaberto)
-   pode expirar e o mesmo lote pode ser medido de novo.
+9. Um lote **ABANDONED** nunca foi contado. O reenvio reabre o Mongo e troca a chave de
+   evidência Redis (`:reopen:{epoch}`) para medir **uma** vez, preservando o fence
+   `ABANDONED` da tentativa antiga. Depois de 7 dias (RF-012), um `SYNCED` (ou
+   `ABANDONED` terminal não reaberto) pode expirar e o mesmo lote pode ser medido de novo.
 10. O Core guarda a idempotência de 7 dias em `UsageFactIdempotency` (com TTL) e os fatos
     de agregação em `UsageFact` (sem TTL). `GET /internal/usage-facts/current-cycle`
     devolve `logs` e `traces` separados para o ciclo vigente do tenant/produto.
@@ -205,10 +206,19 @@ faz `confirm` **antes** de escrever no OpenObserve ou publicar no stream/DLQ. Sa
 insuficiente retorna `429`, sem plano ou Core indisponível retorna `503`; todos usam
 `Retry-After: 120` e o lote não é escrito nem enfileirado.
 
-Se a escrita/publicação falhar depois do débito, o Collector mantém a resposta indisponível e
-persiste um refund idempotente em outbox Mongo (`quota_refund_outbox`). O Core devolve consumo
-apenas uma vez e o refund não reemite `SALDO_BAIXO`; esses alertas ocorrem uma vez em 20% e
-uma vez em 5% por ciclo.
+Se a escrita/publicação falhar depois do débito **sem** armazenar registros (OpenObserve com
+0 aceitos, stream/DLQ indisponível), o Collector mantém a resposta indisponível e persiste um
+refund idempotente em outbox Mongo (`quota_refund_outbox`). Se o destino recusar só parte do
+lote (`acceptedCount > 0`), o débito confirmado **permanece** (bytes como recebidos) e não há
+refund — os aceitos já foram gravados no OpenObserve (a publicação Redis ainda não ocorreu
+nesse caminho). O Core devolve consumo apenas uma vez e o refund não reemite `SALDO_BAIXO`;
+esses alertas ocorrem uma vez em 20% e uma vez em 5% por ciclo.
+
+Um lote `ABANDONED` reaberto no Mongo usa nova chave Redis `usage:fact:{id}:reopen:{epoch}`
+para medir uma vez; a chave original permanece `ABANDONED` e continua a cercar o dispatcher
+atrasado da tentativa anterior.
+
+A sanitização real ainda é provisória (`BatchSanitizer.identity()`).
 
 Runbook operacional (recusa, Core fora, refund `SUSPENDED`, `SALDO_BAIXO` com Redis
 desligado): [quota-reservation-runbook.md](quota-reservation-runbook.md).

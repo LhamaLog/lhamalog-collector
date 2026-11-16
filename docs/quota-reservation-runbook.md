@@ -30,6 +30,15 @@ métrica `lhamalog.quota.insufficient`; ausência de OpenObserve, stream/DLQ e `
    Core; o retry do exportador reutiliza o mesmo `reservationId` determinístico — não há
    reenfileiramento local de uma segunda reserva.
 
+## Recusa parcial do OpenObserve após `confirm`
+
+**Sintomas:** resposta OTLP parcial (`PartiallyAccepted`); métrica
+`lhamalog.quota.post_debit_write_failure`; **sem** item novo em `quota_refund_outbox` para
+essa reserva.
+
+**Ação:** o débito permanece (bytes canônicos como recebidos). Não force refund manual —
+registros aceitos já estão no OpenObserve. Investigue a causa da recusa parcial no destino.
+
 ## Refund outbox em `SUSPENDED` (401/403)
 
 **Sintomas:** itens em `quota_refund_outbox` com `state=SUSPENDED` e `lastError` `HTTP_401` /
@@ -74,3 +83,9 @@ publicador Redis Streams está indisponível ou desabilitado; o débito/`confirm
 - Métricas e logs sanitizados: [usage-measurement.md](usage-measurement.md)
 - Contrato de reserva: [`specs/006-ingest-quota-reservation/contracts/reservatokens-api.md`](../specs/006-ingest-quota-reservation/contracts/reservatokens-api.md)
 - Quickstart / evidência E2E: [`specs/006-ingest-quota-reservation/quickstart.md`](../specs/006-ingest-quota-reservation/quickstart.md)
+
+## Falha depois da publicação no stream (T085)
+
+**Sintomas:** resposta OTLP 503 com `Retry-After: 120`, log WARN "were published but the usage outbox did not confirm".
+**Regra:** os registros já estão no stream de leitura, então o débito (bytes como recebidos = reservado) **permanece**; não há refund.
+O reenvio do exportador cai na deduplicação (`DONE`) e não publica de novo. Refund `SINK_UNAVAILABLE` só ocorre quando nada foi publicado.

@@ -16,7 +16,8 @@ resposta não inclui saldo, plano, identificadores internos nem segredo.
 | Sem plano ou sem ciclo pago | `503` + `Retry-After: 120` | `503` + `Retry-After: 120` | `UNAVAILABLE` + `retry-after: 120` | recusado |
 | Core indisponível, timeout ou 5xx | `503` + `Retry-After: 120` | `503` + `Retry-After: 120` | `UNAVAILABLE` + `retry-after: 120` | falha fechada |
 | `confirm` retorna `RESERVATION_NOT_ACTIVE` | `503` + `Retry-After: 120` | `503` + `Retry-After: 120` | `UNAVAILABLE` + `retry-after: 120` | corta a execução |
-| Falha de OpenObserve, stream ou DLQ após `confirm` | `503` + `Retry-After: 120` | `503` + `Retry-After: 120` | `UNAVAILABLE` + `retry-after: 120` | enfileira refund; reenvio reutiliza o `reservationId` e cria nova reserva se a anterior estiver `REFUNDED` |
+| Falha de OpenObserve (0 aceitos), stream ou DLQ após `confirm` | `503` + `Retry-After: 120` | `503` + `Retry-After: 120` | `UNAVAILABLE` + `retry-after: 120` | enfileira refund; reenvio reutiliza o `reservationId` e cria nova reserva se a anterior estiver `REFUNDED` |
+| Recusa parcial do OpenObserve após `confirm` (`acceptedCount > 0`) | `200` parcial / equivalente | `200` parcial / equivalente | status parcial OTLP | **não** reembolsa; débito confirmado (bytes como recebidos) permanece; decisão `PartiallyAccepted` |
 
 O lote temporário é descartado em toda recusa, sem publicação, sem fato de uso e sem reserva
 assumida sem resposta de sucesso. Core indisponível não usa cache de saldo ou limite.

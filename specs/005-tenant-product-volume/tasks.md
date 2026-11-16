@@ -236,7 +236,7 @@ foram registradas abaixo e aplicadas no worktree local, sem commit.
 ### Revisão do PR #5 do Collector (worktree local, 2026-11-10)
 
 - [X] T062 **Collector** Comparar reenvio pelo conteúdo imutável do lote, sem `acceptedAt`, em `src/main/java/br/com/lhamalog/collector/usage/outbox/MongoUsageOutboxRepository.java`
-- [X] T063 **Collector** Reabrir lote `ABANDONED` para medi-lo uma vez em `src/main/java/br/com/lhamalog/collector/usage/outbox/MongoUsageOutboxRepository.java`
+- [X] T063 **Collector** Reabrir lote `ABANDONED` para medi-lo uma vez em `src/main/java/br/com/lhamalog/collector/usage/outbox/MongoUsageOutboxRepository.java` — **revisão 2 (11/11/2026):** a reabertura Mongo sozinha deixava a chave Redis em `ABANDONED` (TTL 7d) e o reenvio respondia 503; corrigido com `UsageOutboxItem.pendingReopened` (`usage:fact:{id}:reopen:{epoch}`) para medir uma vez sem quebrar o fence do dispatcher atrasado.
 - [X] T064 **Collector** Incluir `leaseOwner`/`leaseUntil` no CAS e em `findAcceptedReady` em `src/main/java/br/com/lhamalog/collector/usage/outbox/MongoUsageOutboxRepository.java`
 - [X] T065 **Collector** Expirar `SYNCED` e `ABANDONED` terminais após 7 dias (`expireAt` + índice) em `src/main/java/br/com/lhamalog/collector/usage/outbox/MongoUsageOutboxRepository.java`
 - [X] T066 **Collector** Estado `SUSPENDED` e métrica `lhamalog.usage.outbox.suspended` em `src/main/java/br/com/lhamalog/collector/usage/core/UsageOutboxWorker.java`

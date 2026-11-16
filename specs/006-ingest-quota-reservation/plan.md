@@ -11,8 +11,13 @@ sanitização terminar, o Collector confirma a reserva e só então grava no Ope
 publica no stream/DLQ. Uma reserva nunca confirmada expira em 20 minutos. A medição de uso
 da spec 005 continua sendo a única fonte de bytes e contagem aceitos.
 
-Após `confirm` bem-sucedido, falha de escrita/publicação é compensada por reembolso
-idempotente solicitado pelo outbox Mongo durável do Collector.
+Após `confirm` bem-sucedido, falha de escrita/publicação **sem** aceitos no destino é
+compensada por reembolso idempotente solicitado pelo outbox Mongo durável do Collector.
+Recusa parcial do OpenObserve mantém o débito (bytes como recebidos).
+
+**Nota (revisão 2):** a sanitização/ocultação real ainda não existe — `BatchSanitizer.identity()`
+é gancho provisório; a concorrência reserva∥sanitização e o débito pré-sanitização já estão
+no fluxo.
 
 ## Contexto Técnico
 

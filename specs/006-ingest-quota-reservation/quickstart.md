@@ -131,6 +131,8 @@ integralmente com `429` e `Retry-After: 120`, sem escrita.
 
 Uma confirmação que deixe saldo em **2 000 bytes ou menos** cruza 20% e emite
 `SALDO_BAIXO` 20 somente uma vez; em **500 bytes ou menos**, emite o limiar 5 somente uma
-vez. Se um lote confirmado de 1 000 bytes falhar depois na escrita/publicação, seu refund
-reduz `consumedBytes` em 1 000 uma única vez e não reemite `SALDO_BAIXO`. A expiração de uma
-reserva nunca confirmada devolve somente `reservedBytes`.
+vez. Se um lote confirmado de 1 000 bytes falhar depois na escrita/publicação **sem**
+aceitos no destino, seu refund reduz `consumedBytes` em 1 000 uma única vez e não reemite
+`SALDO_BAIXO`. Recusa parcial do destino (alguns registros gravados) **não** gera refund: o
+débito dos bytes como recebidos permanece. A expiração de uma reserva nunca confirmada
+devolve somente `reservedBytes`.
