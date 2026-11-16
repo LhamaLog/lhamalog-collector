@@ -10,6 +10,7 @@ import br.com.lhamalog.collector.ingestion.otlp.sink.SinkRejectedException;
 import br.com.lhamalog.collector.ingestion.otlp.sink.SinkUnavailableException;
 import br.com.lhamalog.collector.logging.CorrelationId;
 import br.com.lhamalog.collector.quota.ReservationCorrelation;
+import br.com.lhamalog.collector.quota.RetentionCorrelation;
 import com.google.protobuf.Message;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -121,6 +122,7 @@ final class BatchIngestion {
 		final List<T> eligible = batch.valid();
 		List<T> accepted = eligible;
 		String reservationId = null;
+		Integer retentionDays = null;
 		if (quota != null) {
 			CompletableFuture<QuotaGate.Reservation> reservationFuture = CompletableFuture.supplyAsync(
 					CorrelationId.propagate(() -> quota.reserve(valid.tenantId(), valid.productId(), request, eligible)),
@@ -154,7 +156,10 @@ final class BatchIngestion {
 					return refuseCoreUnavailable(quota, limits, valid.tenantId(), valid.productId(), request, eligible,
 							reservation.reservationId());
 				}
-				case AUTHORIZED -> reservationId = reservation.reservationId();
+				case AUTHORIZED -> {
+					reservationId = reservation.reservationId();
+					retentionDays = reservation.retentionDays();
+				}
 			}
 			try {
 				accepted = sanitizerFuture.get(SANITIZATION_TIMEOUT_SECONDS, TimeUnit.SECONDS);
@@ -184,6 +189,7 @@ final class BatchIngestion {
 			if (reservationId != null) {
 				ReservationCorrelation.set(reservationId);
 			}
+			RetentionCorrelation.set(retentionDays);
 			sink.deliver(valid.tenantId(), valid.productId(), request, accepted);
 		}
 		catch (SinkUnavailableException ex) {
@@ -227,6 +233,7 @@ final class BatchIngestion {
 		}
 		finally {
 			ReservationCorrelation.clear();
+			RetentionCorrelation.clear();
 		}
 		if (batch.rejectedCount() == 0) {
 			return new IngestionDecision.Accepted(batch.valid().size());

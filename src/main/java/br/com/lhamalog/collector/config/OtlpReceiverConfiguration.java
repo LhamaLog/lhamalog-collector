@@ -21,6 +21,7 @@ import br.com.lhamalog.collector.ingestion.otlp.sink.OpenObserveLogsSink;
 import br.com.lhamalog.collector.ingestion.otlp.sink.OpenObserveTracesSink;
 import br.com.lhamalog.collector.ingestion.otlp.sink.PublishingLogsSink;
 import br.com.lhamalog.collector.ingestion.otlp.sink.PublishingTracesSink;
+import br.com.lhamalog.collector.ingestion.otlp.sink.StreamRetentionService;
 import br.com.lhamalog.collector.ingestion.otlp.sink.TraceIngestedPublisher;
 import br.com.lhamalog.collector.ingestion.otlp.sink.TracesSink;
 import br.com.lhamalog.collector.ingestion.otlp.sink.E2eFaultInjectingBatchStore;
@@ -238,6 +239,12 @@ public class OtlpReceiverConfiguration {
 	}
 
 	@Bean
+	StreamRetentionService streamRetentionService(OpenObserveClient client,
+			io.micrometer.core.instrument.MeterRegistry meters) {
+		return new StreamRetentionService(client, Clock.systemUTC(), meters);
+	}
+
+	@Bean
 	LogIngestedPublisher logIngestedPublisher(StringRedisTemplate redis, JsonMapper json,
 			MessagingProperties messaging) {
 		return new LogIngestedPublisher(redis, json, messaging, Clock.systemUTC());
@@ -252,10 +259,12 @@ public class OtlpReceiverConfiguration {
 	@Bean
 	LogsSink logsSink(OpenObserveClient client, OtlpReceiverProperties properties, LogIngestedPublisher publisher,
 			ObjectProvider<UsageFactFactory> usageFacts, ObjectProvider<UsageFactRecorder> usageRecorder,
-			ObjectProvider<UsageProperties> usageProperties, QuotaE2eProperties e2e) {
+			ObjectProvider<UsageProperties> usageProperties, QuotaE2eProperties e2e,
+			StreamRetentionService retention) {
 		UsageProperties usage = usageProperties.getIfAvailable();
 		return new PublishingLogsSink(new E2eFaultInjectingBatchStore<>(
-				new OpenObserveLogsSink(client, properties.openobserve().logsStream(), Clock.systemUTC()), e2e.enabled()),
+				new OpenObserveLogsSink(client, properties.openobserve().logsStream(), Clock.systemUTC(), retention),
+				e2e.enabled()),
 				publisher::publishBatch, usageFacts.getIfAvailable(), usageRecorder.getIfAvailable(),
 				usage == null ? null : (tenant, product, batch, records, key) -> publisher.publishBatchWithUsageEvidence(
 						tenant, product, batch, records, key, usage.deduplicationTtl(), "logs"));
@@ -265,11 +274,13 @@ public class OtlpReceiverConfiguration {
 	TracesSink tracesSink(OpenObserveClient client, OtlpReceiverProperties properties,
 			TraceIngestedPublisher publisher, ObjectProvider<UsageFactFactory> usageFacts,
 			ObjectProvider<UsageFactRecorder> usageRecorder, ObjectProvider<UsageProperties> usageProperties,
-			QuotaE2eProperties e2e) {
+			QuotaE2eProperties e2e, StreamRetentionService retention) {
 		UsageProperties usage = usageProperties.getIfAvailable();
 		return new PublishingTracesSink(
 				new E2eFaultInjectingBatchStore<>(
-						new OpenObserveTracesSink(client, properties.openobserve().tracesStream(), Clock.systemUTC()), e2e.enabled()),
+						new OpenObserveTracesSink(client, properties.openobserve().tracesStream(), Clock.systemUTC(),
+								retention),
+						e2e.enabled()),
 				publisher::publishBatch, usageFacts.getIfAvailable(), usageRecorder.getIfAvailable(),
 				usage == null ? null : (tenant, product, batch, records, key) -> publisher.publishBatchWithUsageEvidence(
 						tenant, product, batch, records, key, usage.deduplicationTtl(), "traces"));

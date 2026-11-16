@@ -45,9 +45,9 @@ public final class CanonicalQuotaGate<R, T> implements QuotaGate<R, T> {
 	public Reservation reserve(String tenantId, String productId, R request, List<T> accepted) {
 		Measurement measurement = measurement(request, accepted);
 		String reservationId = reservationIdFor(tenantId, productId, measurement);
-		QuotaReservationClient.ReservationOutcome outcome = client.reserve(new QuotaReservationClient.ReservationRequest(
+		QuotaReservationClient.ReservationResult result = client.reserve(new QuotaReservationClient.ReservationRequest(
 				reservationId, tenantId, productId, measurement.bytes, reservationId, measurement.domain));
-		return new Reservation(switch (outcome) {
+		Reservation.Outcome mapped = switch (result.outcome()) {
 			case AUTHORIZED -> {
 				observability.authorized();
 				yield Reservation.Outcome.AUTHORIZED;
@@ -65,7 +65,9 @@ public final class CanonicalQuotaGate<R, T> implements QuotaGate<R, T> {
 				yield Reservation.Outcome.NO_PLAN;
 			}
 			case SUSPENDED -> Reservation.Outcome.SUSPENDED;
-		}, reservationId);
+		};
+		Integer retention = mapped == Reservation.Outcome.AUTHORIZED ? result.knownRetentionDays() : null;
+		return new Reservation(mapped, reservationId, retention);
 	}
 
 	@Override

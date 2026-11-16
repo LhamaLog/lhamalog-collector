@@ -28,7 +28,15 @@ public interface QuotaGate<R, T> {
 	default void postDebitWriteFailure() {
 	}
 
-	record Reservation(Outcome outcome, String reservationId) {
+	/**
+	 * @param retentionDays optional plan retention from Core (LLT-185); null when unknown
+	 */
+	record Reservation(Outcome outcome, String reservationId, Integer retentionDays) {
+
+		public Reservation(Outcome outcome, String reservationId) {
+			this(outcome, reservationId, null);
+		}
+
 		public enum Outcome {
 			AUTHORIZED,
 			INSUFFICIENT_BALANCE,

@@ -32,10 +32,18 @@ public class OpenObserveLogsSink implements LogsSink, BatchStore<LogRecord> {
 
 	private final Clock clock;
 
+	private final StreamRetentionService retention;
+
 	public OpenObserveLogsSink(OpenObserveClient client, String streamPrefix, Clock clock) {
+		this(client, streamPrefix, clock, null);
+	}
+
+	public OpenObserveLogsSink(OpenObserveClient client, String streamPrefix, Clock clock,
+			StreamRetentionService retention) {
 		this.client = client;
 		this.streamPrefix = streamPrefix;
 		this.clock = clock;
+		this.retention = retention;
 	}
 
 	@Override
@@ -92,6 +100,9 @@ public class OpenObserveLogsSink implements LogsSink, BatchStore<LogRecord> {
 			documents.add(doc);
 		}
 		client.ingest(stream, documents);
+		if (retention != null) {
+			retention.ensureAfterIngestAsync("logs", stream);
+		}
 		return new StoredBatch(Signal.LOGS, client.organization(), stream, batchId, recordIds, min, max,
 				receivedAt.toString());
 	}

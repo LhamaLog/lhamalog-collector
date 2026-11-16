@@ -29,10 +29,18 @@ public class OpenObserveTracesSink implements TracesSink, BatchStore<Span> {
 
 	private final Clock clock;
 
+	private final StreamRetentionService retention;
+
 	public OpenObserveTracesSink(OpenObserveClient client, String streamPrefix, Clock clock) {
+		this(client, streamPrefix, clock, null);
+	}
+
+	public OpenObserveTracesSink(OpenObserveClient client, String streamPrefix, Clock clock,
+			StreamRetentionService retention) {
 		this.client = client;
 		this.streamPrefix = streamPrefix;
 		this.clock = clock;
+		this.retention = retention;
 	}
 
 	@Override
@@ -93,6 +101,9 @@ public class OpenObserveTracesSink implements TracesSink, BatchStore<Span> {
 			documents.add(doc);
 		}
 		client.ingest(stream, documents);
+		if (retention != null) {
+			retention.ensureAfterIngestAsync("traces", stream);
+		}
 		return new StoredBatch(Signal.TRACES, client.organization(), stream, batchId, recordIds, min, max,
 				receivedAt.toString());
 	}
