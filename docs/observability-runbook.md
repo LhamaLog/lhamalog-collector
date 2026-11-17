@@ -91,7 +91,7 @@ Os receivers OTLP são JDK HttpServer/gRPC (não Spring MVC). Painéis `http_ser
 
 ## Railway (IaC preparado, nada implantado)
 
-Arquivos: `.railway/railway.ts` (Infrastructure as Code, partial `observability`) e `infra/railway/<serviço>/` (Dockerfile + config de cada serviço; contexto de build = raiz do repositório). O formato antigo `railway.json`/`railway.toml` (Config as Code) está obsoleto na Railway, não aceita serviço novo e deixa de ser lido em 01/12/2026, por isso não foi usado.
+Arquivos: `.railway/railway.ts` (Infrastructure as Code, partial `observability-stack`) e `infra/railway/<serviço>/` (Dockerfile + config de cada serviço; contexto de build = raiz do repositório). O formato antigo `railway.json`/`railway.toml` (Config as Code) está obsoleto na Railway, não aceita serviço novo e deixa de ser lido em 01/12/2026, por isso não foi usado.
 
 **Nada foi criado nem implantado.** Implantar exige OK do Michel.
 
@@ -115,7 +115,7 @@ Todos com restart `ON_FAILURE` (até 10 tentativas), build por `DOCKERFILE` e `w
 | prometheus | `PROMETHEUS_RETENTION` | `7d` |
 | alloy | `LOKI_PUSH_URL` | `http://loki.railway.internal:3100/loki/api/v1/push` |
 | grafana | `GF_SECURITY_ADMIN_USER` | `admin` |
-| grafana | `GF_SECURITY_ADMIN_PASSWORD` | **segredo**: `preserve()` no IaC. Criar antes como variável (selada) do serviço no dashboard; nunca em arquivo |
+| grafana | `GF_SECURITY_ADMIN_PASSWORD` | **segredo**: `preserve()` no IaC. Criar antes como variável (selada) do serviço no dashboard; nunca em arquivo. Sem ela (ou vazia, ou `admin`) o entrypoint `infra/railway/grafana/entrypoint.sh` aborta com `event=grafana.admin_password.missing` e o Grafana não sobe: nada de `admin/admin` gravado no volume |
 | grafana | `GF_AUTH_ANONYMOUS_ENABLED` / `GF_USERS_ALLOW_SIGN_UP` | `false` |
 | grafana | `GF_SECURITY_COOKIE_SECURE` | `true` (acesso só pelo domínio HTTPS) |
 | grafana | `PROMETHEUS_URL` / `LOKI_URL` | `http://prometheus.railway.internal:9090` / `http://loki.railway.internal:3100` |

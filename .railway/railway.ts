@@ -5,7 +5,7 @@
 import { defineRailway, github, group, preserve, project, service, volume } from "railway/iac";
 
 /** Partial: this file owns only the observability services, not the Collector/Core services. */
-export const partial = "observability";
+export const partial = "observability-stack";
 
 const REPO = "LhamaLog/lhamalog-collector";
 
