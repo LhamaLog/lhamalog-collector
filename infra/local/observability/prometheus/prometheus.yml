@@ -11,3 +11,11 @@ scrape_configs:
           - host.docker.internal:9464
         labels:
           service: lhamalog-collector
+
+  # Outros módulos (Core, Varredura, Finder, Ocorrência) ainda não expõem /actuator/prometheus.
+  # Quando expuserem, adicione um job por módulo (o dashboard 'Métricas por módulo' usa estes nomes):
+  # - job_name: lhamalog-core
+  #   metrics_path: /actuator/prometheus
+  #   static_configs:
+  #     - targets: [host.docker.internal:<porta-de-management>]
+  # (lhamalog-varredura, lhamalog-finder, lhamalog-ocorrencia: idem)

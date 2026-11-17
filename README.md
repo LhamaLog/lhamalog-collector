@@ -288,6 +288,7 @@ make metrics-down
 
 - Catálogo: [specs/008-collector-metrics/metricas.md](specs/008-collector-metrics/metricas.md)
 - Runbook: [docs/observability-runbook.md](docs/observability-runbook.md)
+- Dashboards (pasta LhamaLog no Grafana): Controle de filas, Métricas por módulo e Logs por módulo; ver a seção "Dashboards provisionados" do runbook
 - Log file local (Alloy): `LHAMALOG_LOG_FILE` / `logs/lhamalog-collector.log`
 - Cinco métricas novas aprovadas: aceite records/bytes, latency, queue size, DLQ size — **sem** tenantId/productId em tags
 
