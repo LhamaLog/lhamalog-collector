@@ -1,29 +1,61 @@
-// Railway (LLT-187): there is no shared log file between services, so Alloy receives OTLP/HTTP logs
-// from the Collector over private networking (http://alloy.railway.internal:4318) and forwards them to Loki.
-// Labels stay low-cardinality (service_name, level); no tenant labels.
+// Railway (LLT-187): there is no shared log file between services, so Alloy receives OTLP/HTTP logs from the
+// modules over private networking (http://alloy.railway.internal:4318) and sends them to the private
+// OpenObserve. Organization and stream come from service variables with safe defaults ("default" /
+// "lhamalog_platform"), never from the log data. The credential is the sealed OPENOBSERVE_AUTH_BASIC variable.
+// Attributes per record: service (from service.name), level (from severity) and, when the sender sets it, cid.
 
-otelcol.receiver.otlp "collector" {
+// Alloy's own logs: warnings and errors only.
+logging {
+  level  = "warn"
+  format = "logfmt"
+}
+
+otelcol.receiver.otlp "modules" {
   http {
     endpoint = "[::]:4318"
   }
 
   output {
-    logs = [otelcol.processor.batch.default.input]
+    logs = [otelcol.processor.transform.platform.input]
   }
 }
 
-otelcol.processor.batch "default" {
+otelcol.processor.transform "platform" {
+  error_mode = "ignore"
+
+  log_statements {
+    context    = "log"
+    statements = [
+      `set(attributes["service"], resource.attributes["service.name"]) where resource.attributes["service.name"] != nil`,
+      `set(attributes["level"], severity_text) where severity_text != ""`,
+    ]
+  }
+
   output {
-    logs = [otelcol.exporter.loki.default.input]
+    logs = [otelcol.processor.batch.platform.input]
   }
 }
 
-otelcol.exporter.loki "default" {
-  forward_to = [loki.write.railway.receiver]
+otelcol.processor.batch "platform" {
+  output {
+    logs = [otelcol.exporter.otlphttp.openobserve.input]
+  }
 }
 
-loki.write "railway" {
-  endpoint {
-    url = sys.env("LOKI_PUSH_URL")
+// otlphttp/openobserve: <OPENOBSERVE_URL>/api/<org>, headers Authorization and stream-name.
+// OPENOBSERVE_AUTH_BASIC may come with or without a leading "Basic " (any case, spaces or tab). Alloy has no
+// regex or if/else, so: t = value trimmed (tab -> space); first = first word of t (base64 has no spaces);
+// if lower(first) == "basic", coalesce() picks `first` and it is removed; otherwise it picks
+// lower(first) + "#", which never prefixes t (no '#' in base64), so nothing is removed. Header = "Basic " + rest.
+otelcol.exporter.otlphttp "openobserve" {
+  client {
+    endpoint = sys.env("OPENOBSERVE_URL") + "/api/" + coalesce(sys.env("OPENOBSERVE_PLATFORM_ORG"), "default")
+    headers  = {
+      "Authorization" = "Basic " + string.trim_space(string.trim_prefix(
+        string.trim_space(string.replace(sys.env("OPENOBSERVE_AUTH_BASIC"), "\t", " ")),
+        coalesce(string.trim_prefix(string.to_lower(string.split(string.trim_space(string.replace(sys.env("OPENOBSERVE_AUTH_BASIC"), "\t", " ")), " ")[0]) + "#", "basic#"), string.split(string.trim_space(string.replace(sys.env("OPENOBSERVE_AUTH_BASIC"), "\t", " ")), " ")[0]),
+      )),
+      "stream-name"   = coalesce(sys.env("OPENOBSERVE_PLATFORM_STREAM"), "lhamalog_platform"),
+    }
   }
 }

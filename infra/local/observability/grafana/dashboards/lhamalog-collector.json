@@ -210,42 +210,11 @@
         { "expr": "process_cpu_usage", "legendFormat": "process" },
         { "expr": "system_cpu_usage", "legendFormat": "system" }
       ]
-    },
-    {
-      "type": "logs",
-      "title": "Collector logs (filter by cid)",
-      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 47 },
-      "datasource": { "type": "loki", "uid": "loki" },
-      "targets": [
-        {
-          "expr": "{service=\"lhamalog-collector\"} |= \"$cid\" |~ \"$level\"",
-          "legendFormat": ""
-        }
-      ]
     }
   ],
   "schemaVersion": 39,
   "tags": ["lhamalog", "collector", "llt-187"],
-  "templating": {
-    "list": [
-      {
-        "name": "cid",
-        "type": "textbox",
-        "label": "cid",
-        "current": { "text": "", "value": "" },
-        "options": [],
-        "query": ""
-      },
-      {
-        "name": "level",
-        "type": "textbox",
-        "label": "level",
-        "current": { "text": ".*", "value": ".*" },
-        "options": [],
-        "query": ".*"
-      }
-    ]
-  },
+  "templating": { "list": [] },
   "time": { "from": "now-1h", "to": "now" },
   "timezone": "browser",
   "title": "LhamaLog Collector",

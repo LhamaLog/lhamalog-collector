@@ -1,7 +1,9 @@
-# Stack de observabilidade do Collector (LLT-187). Projeto separado: nao usa secrets do compose.yaml.
+# Stack de observabilidade do Collector (LLT-187): Prometheus + Grafana (métricas) e Alloy -> OpenObserve (logs).
 # make metrics-up  |  docker compose -p lhamalog-observability -f infra/local/compose.observability.yaml up -d
 # Portas publicadas so em 127.0.0.1 (LLT-187 review): nada fica exposto na rede local.
 # Grafana sem acesso anonimo: login com GRAFANA_ADMIN_USER / GRAFANA_ADMIN_PASSWORD do infra/local/.env.
+# Logs do proprio Collector vao para o OpenObserve do compose.yaml (127.0.0.1:5080 no host), org FIXA default,
+# stream FIXO lhamalog_platform, com OPENOBSERVE_AUTH_BASIC do mesmo infra/local/.env (nunca em arquivo versionado).
 name: lhamalog-observability
 
 services:
@@ -17,16 +19,13 @@ services:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.retention.time=24h"
 
-  loki:
-    image: grafana/loki:3.5.3
-    ports:
-      - "127.0.0.1:${LOKI_PORT:-3100}:3100"
-    volumes:
-      - ./observability/loki/loki-config.yaml:/etc/loki/local-config.yaml:ro
-    command: ["-config.file=/etc/loki/local-config.yaml"]
-
   alloy:
     image: grafana/alloy:v1.10.2
+    environment:
+      OPENOBSERVE_URL: "${OPENOBSERVE_PLATFORM_URL:-http://host.docker.internal:5080}"
+      OPENOBSERVE_AUTH_BASIC: "${OPENOBSERVE_AUTH_BASIC:?Defina OPENOBSERVE_AUTH_BASIC no infra/local/.env (base64 de email:passcode, com ou sem o prefixo Basic)}"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./observability/alloy/config.alloy:/etc/alloy/config.alloy:ro
       - ../../logs:/var/log/lhamalog:ro
@@ -34,11 +33,13 @@ services:
       - "run"
       - "/etc/alloy/config.alloy"
       - "--storage.path=/var/lib/alloy/data"
-    depends_on:
-      - loki
+      - "--disable-reporting"
 
   grafana:
-    image: grafana/grafana:12.2.0
+    build:
+      context: ../..
+      dockerfile: infra/local/observability/grafana/Dockerfile
+    image: lhamalog-observability-grafana:local
     ports:
       - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
     environment:
@@ -47,9 +48,13 @@ services:
       GF_AUTH_ANONYMOUS_ENABLED: "false"
       GF_AUTH_DISABLE_LOGIN_FORM: "false"
       GF_USERS_DEFAULT_THEME: light
+      OPENOBSERVE_URL: "${OPENOBSERVE_PLATFORM_URL:-http://host.docker.internal:5080}"
+      OPENOBSERVE_USERNAME: "${OPENOBSERVE_USERNAME:?Defina OPENOBSERVE_USERNAME no infra/local/.env}"
+      OPENOBSERVE_PASSWORD: "${OPENOBSERVE_PASSWORD:?Defina OPENOBSERVE_PASSWORD no infra/local/.env}"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
     depends_on:
       - prometheus
-      - loki

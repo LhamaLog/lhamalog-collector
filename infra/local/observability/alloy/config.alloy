@@ -1,6 +1,14 @@
-// Tails Collector log files written on the host (logging.file.name).
-// Labels stay low-cardinality (service, level). cid/event are structured metadata.
-// Preferred over a Loki appender: no new runtime dependency, principle-VI line preserved.
+// Alloy's own logs: warnings and errors only.
+logging {
+  level  = "warn"
+  format = "logfmt"
+}
+
+// Local (LLT-187): tails the Collector log file written on the host (logging.file.name) and sends each line
+// over OTLP/HTTP to OpenObserve, organization "default", stream "lhamalog_platform" (both fixed below).
+// Credential only from the OPENOBSERVE_AUTH_BASIC environment variable (infra/local/.env): base64 of
+// "email:ingestion passcode", with or without the "Basic " prefix (normalized below).
+// Attributes per record: service (module), level, cid (correlation id), logger and event.
 
 local.file_match "collector_logs" {
   path_targets = [{
@@ -15,27 +23,38 @@ loki.source.file "collector" {
 }
 
 loki.process "principle_vi" {
-  forward_to = [loki.write.local.receiver]
+  forward_to = [otelcol.receiver.loki.platform.receiver]
 
   stage.multiline {
     firstline     = "^\\d{4}-\\d{2}-\\d{2}T"
     max_wait_time = "3s"
   }
 
+  // The log file is written on Windows (CRLF): drop the carriage returns.
+  stage.replace {
+    expression = "(\\r)"
+    replace    = ""
+  }
+
+  stage.label_drop {
+    values = ["filename"]
+  }
+
   stage.regex {
     expression = "(?s)^(?P<ts>\\d{4}-\\d{2}-\\d{2}T\\S+)\\s+(?P<level>\\S+)\\s+\\[(?P<app>[^\\]]+)\\]\\s+\\[cid=(?P<cid>[^\\]]+)\\]\\s+\\[(?P<thread>[^\\]]+)\\]\\s+(?P<logger>\\S+)\\s+-\\s+(?P<message>.*)$"
   }
 
-  stage.labels {
-    values = {
-      level = "level",
-    }
+  stage.regex {
+    expression = "event=(?P<event>[A-Za-z0-9_.-]+)"
   }
 
-  stage.structured_metadata {
+  // Labels here are only a transport detail: they become OTLP attributes (columns in OpenObserve).
+  stage.labels {
     values = {
+      level  = "level",
       cid    = "cid",
       logger = "logger",
+      event  = "event",
     }
   }
 
@@ -44,11 +63,39 @@ loki.process "principle_vi" {
     format = "RFC3339Nano"
   }
 
-  // No stage.output: the full principle-VI line (date+zone, cid, class.method, event=) is kept in Loki.
+  // No stage.output: the full principle-VI line (date+zone, cid, class.method, event=) is the log body.
 }
 
-loki.write "local" {
-  endpoint {
-    url = "http://loki:3100/loki/api/v1/push"
+otelcol.receiver.loki "platform" {
+  output {
+    logs = [otelcol.processor.batch.platform.input]
+  }
+}
+
+otelcol.processor.batch "platform" {
+  output {
+    logs = [otelcol.exporter.otlphttp.openobserve.input]
+  }
+}
+
+// OpenObserve (Michel's format): otlphttp/openobserve, endpoint <OPENOBSERVE_URL>/api/default,
+// headers Authorization = "Basic " + OPENOBSERVE_AUTH_BASIC and stream-name = lhamalog_platform.
+// Organization and stream are FIXED here (never taken from the log data), so platform logs can never land in a
+// tenant stream: tenants live in another organization (lhamalog) and the Collector refuses to write tenant data
+// to the organization "default". The credential comes only from the OPENOBSERVE_AUTH_BASIC variable.
+// OPENOBSERVE_AUTH_BASIC may come with or without a leading "Basic " (any case, spaces or tab). Alloy has no
+// regex or if/else, so: t = value trimmed (tab -> space); first = first word of t (base64 has no spaces);
+// if lower(first) == "basic", coalesce() picks `first` and it is removed; otherwise it picks
+// lower(first) + "#", which never prefixes t (no '#' in base64), so nothing is removed. Header = "Basic " + rest.
+otelcol.exporter.otlphttp "openobserve" {
+  client {
+    endpoint = sys.env("OPENOBSERVE_URL") + "/api/default"
+    headers  = {
+      "Authorization" = "Basic " + string.trim_space(string.trim_prefix(
+        string.trim_space(string.replace(sys.env("OPENOBSERVE_AUTH_BASIC"), "\t", " ")),
+        coalesce(string.trim_prefix(string.to_lower(string.split(string.trim_space(string.replace(sys.env("OPENOBSERVE_AUTH_BASIC"), "\t", " ")), " ")[0]) + "#", "basic#"), string.split(string.trim_space(string.replace(sys.env("OPENOBSERVE_AUTH_BASIC"), "\t", " ")), " ")[0]),
+      )),
+      "stream-name"   = "lhamalog_platform",
+    }
   }
 }

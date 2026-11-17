@@ -49,7 +49,7 @@ infra-logs:
 infra-config:
 	$(COMPOSE) config -q
 
-# Observabilidade do Collector (Prometheus + Grafana + Loki + Alloy) — projeto separado, sem secrets do compose principal
+# Observabilidade do Collector (Prometheus + Grafana + Alloy; logs no OpenObserve) — projeto separado, sem secrets do compose principal
 metrics-up:
 	$(COMPOSE_METRICS) up -d
 

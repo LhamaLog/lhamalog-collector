@@ -1,6 +1,10 @@
 apiVersion: 1
 
-# URLs come from Railway variables (private networking), e.g. http://prometheus.railway.internal:9090.
+# URLs and credentials come from Railway variables (private networking), never from this file.
+deleteDatasources:
+  - name: Loki
+    orgId: 1
+
 datasources:
   - name: Prometheus
     uid: prometheus
@@ -10,9 +14,19 @@ datasources:
     isDefault: true
     editable: false
 
-  - name: Loki
-    uid: loki
-    type: loki
+  # Platform logs (Collector and other modules): OpenObserve org "default", stream "lhamalog_platform".
+  # Grafana SEARCHES, so it needs a real OpenObserve login (OPENOBSERVE_USERNAME / OPENOBSERVE_PASSWORD from the
+  # environment). The ingestion credential OPENOBSERVE_AUTH_BASIC (user + ingestion passcode) only works on the
+  # ingestion endpoints and is used by Alloy alone. No credential is written in this file.
+  - name: OpenObserve
+    uid: openobserve
+    type: openobserve
     access: proxy
-    url: ${LOKI_URL}
+    url: ${OPENOBSERVE_URL}
+    basicAuth: true
+    basicAuthUser: ${OPENOBSERVE_USERNAME}
+    jsonData:
+      timestamp_column: _timestamp
+    secureJsonData:
+      basicAuthPassword: ${OPENOBSERVE_PASSWORD}
     editable: false

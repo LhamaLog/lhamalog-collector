@@ -123,7 +123,7 @@ docker compose -f infra/local/compose.yaml down
 | Status dos containers | `docker compose -f infra/local/compose.yaml ps` | `make infra-ps` |
 | Logs dos containers | `docker compose -f infra/local/compose.yaml logs -f` | `make infra-logs` |
 | Validar o compose | `docker compose -f infra/local/compose.yaml config -q` | `make infra-config` |
-| Subir observabilidade (Prom/Grafana/Loki) | `docker compose -p lhamalog-observability -f infra/local/compose.observability.yaml up -d` | `make metrics-up` |
+| Subir observabilidade (Prom/Grafana/Alloy) | `docker compose -p lhamalog-observability -f infra/local/compose.observability.yaml up -d` | `make metrics-up` |
 | Parar observabilidade | `docker compose -p lhamalog-observability -f infra/local/compose.observability.yaml down` | `make metrics-down` |
 | Validar compose de métricas | `docker compose -p lhamalog-observability -f infra/local/compose.observability.yaml config -q` | `make metrics-config` |
 
@@ -281,7 +281,7 @@ Scraping Prometheus na porta de management (`MANAGEMENT_PORT`, default **9464**)
 Stack local separado (sem secrets do compose principal):
 
 ```bash
-make metrics-up      # Prometheus + Grafana + Loki + Alloy
+make metrics-up      # Prometheus + Grafana + Alloy (logs no OpenObserve)
 make metrics-config  # valida o compose
 make metrics-down
 ```
@@ -289,7 +289,8 @@ make metrics-down
 - Catálogo: [specs/008-collector-metrics/metricas.md](specs/008-collector-metrics/metricas.md)
 - Runbook: [docs/observability-runbook.md](docs/observability-runbook.md)
 - Dashboards (pasta LhamaLog no Grafana): Controle de filas, Métricas por módulo e Logs por módulo; ver a seção "Dashboards provisionados" do runbook
-- Log file local (Alloy): `LHAMALOG_LOG_FILE` / `logs/lhamalog-collector.log`
+- Log file local (Alloy): `LHAMALOG_LOG_FILE` / `logs/lhamalog-collector.log` → OpenObserve, org `default`, stream `lhamalog_platform` (fixos; dados de tenant ficam na org `lhamalog` e o Collector recusa `organization=default`)
+- `OPENOBSERVE_AUTH_BASIC` no `infra/local/.env`: base64 de `email:passcode de ingestão` do OpenObserve, com ou sem o prefixo `Basic ` (usado só pelo Alloy; o datasource do Grafana usa `OPENOBSERVE_USERNAME`/`OPENOBSERVE_PASSWORD`)
 - Cinco métricas novas aprovadas: aceite records/bytes, latency, queue size, DLQ size — **sem** tenantId/productId em tags
 
 ## Retenção de logs brutos por plano (LLT-185)

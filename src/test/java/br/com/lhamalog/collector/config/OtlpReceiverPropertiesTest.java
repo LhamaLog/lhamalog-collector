@@ -38,6 +38,22 @@ class OtlpReceiverPropertiesTest {
 	}
 
 	@Test
+	void platformLogsOrganizationIsRejectedForTenantData() {
+		runner.withPropertyValues("lhamalog.otlp.openobserve.organization= Default ")
+			.run(context -> assertThat(context).hasFailed()
+				.getFailure()
+				.rootCause()
+				.hasMessageContaining("reserved for platform logs"));
+	}
+
+	@Test
+	void defaultOrganizationIsNotThePlatformOne() {
+		runner.run(context -> assertThat(context.getBean(OtlpReceiverProperties.class).openobserve().organization())
+			.isEqualTo("lhamalog")
+			.isNotEqualToIgnoringCase(OtlpReceiverProperties.OpenObserve.PLATFORM_ORGANIZATION));
+	}
+
+	@Test
 	void defaultsAreSafe() {
 		runner.run(context -> {
 			OtlpReceiverProperties properties = context.getBean(OtlpReceiverProperties.class);
