@@ -40,6 +40,13 @@ final class OtlpAcceptanceSupport {
 
 	/** Product with tenant and a fresh random token; only the SHA-256 goes to MongoDB. */
 	record SeededProduct(String tenantId, String productId, String token) {
+		String logsStream() {
+			return br.com.lhamalog.collector.ingestion.otlp.sink.TenantStreamNames.resolve("logs", tenantId);
+		}
+
+		String tracesStream() {
+			return br.com.lhamalog.collector.ingestion.otlp.sink.TenantStreamNames.resolve("traces", tenantId);
+		}
 	}
 
 	static SeededProduct seedProduct(MongoOperations mongo) {

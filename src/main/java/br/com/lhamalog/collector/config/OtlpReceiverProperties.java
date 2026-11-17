@@ -73,7 +73,10 @@ public record OtlpReceiverProperties(
 			@DefaultValue("0") int port) {
 	}
 
-	/** Destino OpenObserve para logs e traces (ADR_168). */
+	/**
+	 * Destino OpenObserve para logs e traces (ADR_168). {@code logsStream}/{@code tracesStream} are
+	 * prefixes for per-tenant stream names (LLT-185), not absolute stream names.
+	 */
 	public record OpenObserve(
 			String url,
 			@DefaultValue("lhamalog") String organization,

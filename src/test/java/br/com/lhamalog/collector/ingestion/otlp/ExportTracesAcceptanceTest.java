@@ -119,8 +119,9 @@ class ExportTracesAcceptanceTest {
 		finally {
 			channel.shutdownNow();
 		}
+		String ooStream = product.tracesStream();
 		for (String name : List.of(httpName, grpcName)) {
-			List<JsonNode> documents = awaitDocuments(env, "traces", "name", name);
+			List<JsonNode> documents = awaitDocuments(env, ooStream, "name", name);
 			assertThat(documents).hasSize(1);
 			assertThat(text(documents.getFirst(), "productId")).isEqualTo(product.productId());
 			assertThat(text(documents.getFirst(), "tenantId")).isEqualTo(product.tenantId());
@@ -134,6 +135,7 @@ class ExportTracesAcceptanceTest {
 				.toList();
 			assertThat(references).hasSize(1);
 			assertThat(references.getFirst().path("signal").asString()).isEqualTo("TRACES");
+			assertThat(references.getFirst().path("openobserve").path("stream").asString()).isEqualTo(ooStream);
 			assertThat(references.getFirst().path("openobserve").path("recordId").asString())
 				.isEqualTo(text(documents.getFirst(), "lhamalog_record_id"));
 			assertThat(references.getFirst().toString()).doesNotContain(name);
@@ -207,10 +209,11 @@ class ExportTracesAcceptanceTest {
 		assertThat(postProtobuf(httpServer.getPort(), "/v1/traces", product.token(), body).statusCode()).isEqualTo(200);
 
 		long end = System.nanoTime() + java.time.Duration.ofSeconds(60).toNanos();
-		List<JsonNode> documents = awaitDocuments(env, "traces", "name", name);
+		String ooStream = product.tracesStream();
+		List<JsonNode> documents = awaitDocuments(env, ooStream, "name", name);
 		while (documents.size() < 2 && System.nanoTime() < end) {
 			Thread.sleep(1000);
-			documents = OtlpAcceptanceSupport.search(env, "traces", "name", name);
+			documents = OtlpAcceptanceSupport.search(env, ooStream, "name", name);
 		}
 		assertThat(documents).hasSize(2);
 		assertThat(text(documents.get(0), "lhamalog_record_id")).isEqualTo(text(documents.get(1), "lhamalog_record_id"));

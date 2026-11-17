@@ -100,6 +100,44 @@ public class OpenObserveClient {
 		confirm(response.body(), documents.size());
 	}
 
+	/**
+	 * Applies stream retention (LLT-185). Returns the HTTP status; does not throw for non-2xx so callers can
+	 * fail soft without affecting the batch response. Throws only on transport interruption/unreachability.
+	 *
+	 * @param streamType {@code logs} or {@code traces}
+	 * @return HTTP status code from OpenObserve
+	 */
+	public int putStreamRetention(String stream, String streamType, int retentionDays) {
+		if (baseUrl == null) {
+			throw new SinkUnavailableException("OpenObserve URL is not configured");
+		}
+		if (retentionDays <= 0) {
+			throw new IllegalArgumentException("retentionDays must be positive");
+		}
+		String type = streamType == null || streamType.isBlank() ? "logs" : streamType;
+		byte[] body = json.writeValueAsBytes(Map.of("data_retention", retentionDays));
+		HttpRequest.Builder request = HttpRequest
+			.newBuilder(URI.create(baseUrl + "/api/" + organization + "/streams/" + stream + "/settings?type=" + type))
+			.timeout(Duration.ofSeconds(5))
+			.header("Content-Type", "application/json")
+			.PUT(HttpRequest.BodyPublishers.ofByteArray(body));
+		if (authorization != null) {
+			request.header("Authorization", authorization);
+		}
+		try {
+			HttpResponse<String> response = http.send(request.build(), HttpResponse.BodyHandlers.ofString());
+			return response.statusCode();
+		}
+		catch (IOException ex) {
+			throw new SinkUnavailableException("OpenObserve retention settings unreachable: " + ex.getClass().getSimpleName(),
+					ex);
+		}
+		catch (InterruptedException ex) {
+			Thread.currentThread().interrupt();
+			throw new SinkUnavailableException("Interrupted while applying OpenObserve retention", ex);
+		}
+	}
+
 	private void confirm(String body, int sent) {
 		long successful = 0;
 		long failed = 0;

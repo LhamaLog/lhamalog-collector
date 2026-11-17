@@ -28,7 +28,7 @@ class RefundOutboxWorkerTest {
 		InMemoryOutbox outbox = new InMemoryOutbox();
 		outbox.enqueue("r-cid", "sink", NOW);
 		new RefundOutboxWorker(outbox, new QuotaReservationClient() {
-			@Override public ReservationOutcome reserve(ReservationRequest request) { throw new UnsupportedOperationException(); }
+			@Override public ReservationResult reserve(ReservationRequest request) { throw new UnsupportedOperationException(); }
 			@Override public void confirm(String reservationId) { }
 			@Override public void release(String reservationId) { }
 			@Override public int refund(String reservationId) {
@@ -92,7 +92,7 @@ class RefundOutboxWorkerTest {
 
 	private static QuotaReservationClient client(int status) {
 		return new QuotaReservationClient() {
-			@Override public ReservationOutcome reserve(ReservationRequest request) { throw new UnsupportedOperationException(); }
+			@Override public ReservationResult reserve(ReservationRequest request) { throw new UnsupportedOperationException(); }
 			@Override public void confirm(String reservationId) { }
 			@Override public void release(String reservationId) { }
 			@Override public int refund(String reservationId) { return status; }

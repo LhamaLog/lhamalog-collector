@@ -14,6 +14,16 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 - Stack local Prometheus + Loki + Alloy + Grafana (`compose.observability.yaml`, `make metrics-*`), portas só em `127.0.0.1` e Grafana sem acesso anônimo. Runbook `docs/observability-runbook.md`.
 - IaC da Railway para o módulo de observabilidade (`.railway/railway.ts`, `infra/railway/`), sem deploy: Prometheus, Loki e Alloy só na rede privada.
 
+### Adicionado (LLT-185)
+
+- Stream OpenObserve por tenant (`{prefixo}_{tenant}`, com hash quando o id é alterado) para logs e traces.
+- Retenção por plano aplicada no stream via `PUT /api/{org}/streams/{s}/settings` com o `retentionDays` da reserva do Core (cache de 1 h, backoff de 60 s, fila limitada).
+- Métrica `lhamalog.openobserve.retention.apply{outcome,type}` e runbook `docs/raw-log-retention-runbook.md`.
+
+### Alterado (LLT-185)
+
+- `OPENOBSERVE_LOGS_STREAM` / `OPENOBSERVE_TRACES_STREAM` passam a ser prefixos. O stream compartilhado `logs`/`traces` deixa de receber dados novos (migração só documentada).
+
 ### Adicionado (LLT-186)
 
 - Medição de volume por tenant, produto e domínio, outbox Mongo e envio ao Core.
