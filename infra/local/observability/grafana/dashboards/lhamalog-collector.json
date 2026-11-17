@@ -1,0 +1,223 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Ingestion refused by reason",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (reason) (rate(lhamalog_ingestion_refused_total[5m]))",
+          "legendFormat": "{{reason}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Accepted records/s",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (signal, protocol) (rate(lhamalog_ingestion_accepted_records_total[5m]))",
+          "legendFormat": "{{signal}}/{{protocol}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Accepted bytes/s",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (signal, protocol) (rate(lhamalog_ingestion_accepted_bytes_total[5m]))",
+          "legendFormat": "{{signal}}/{{protocol}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Ingestion latency p50/p95/p99",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum by (le, signal, protocol) (rate(lhamalog_ingestion_latency_seconds_bucket[5m])))",
+          "legendFormat": "p50 {{signal}}/{{protocol}}"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, signal, protocol) (rate(lhamalog_ingestion_latency_seconds_bucket[5m])))",
+          "legendFormat": "p95 {{signal}}/{{protocol}}"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum by (le, signal, protocol) (rate(lhamalog_ingestion_latency_seconds_bucket[5m])))",
+          "legendFormat": "p99 {{signal}}/{{protocol}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Latency outcomes",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (outcome, signal, protocol) (rate(lhamalog_ingestion_latency_seconds_count[5m]))",
+          "legendFormat": "{{outcome}} {{signal}}/{{protocol}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Queue size by signal",
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "lhamalog_queue_size",
+          "legendFormat": "{{signal}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "DLQ size by signal (alert if > 0)",
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "lhamalog_dlq_size",
+          "legendFormat": "{{signal}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Quota counters",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "rate(lhamalog_quota_authorized_total[5m])", "legendFormat": "authorized" },
+        { "expr": "rate(lhamalog_quota_insufficient_total[5m])", "legendFormat": "insufficient" },
+        { "expr": "rate(lhamalog_quota_no_plan_total[5m])", "legendFormat": "no_plan" },
+        { "expr": "rate(lhamalog_quota_core_unavailable_total[5m])", "legendFormat": "core_unavailable" },
+        { "expr": "rate(lhamalog_quota_unlimited_total[5m])", "legendFormat": "unlimited" },
+        { "expr": "rate(lhamalog_quota_released_total[5m])", "legendFormat": "released" },
+        { "expr": "rate(lhamalog_quota_refund_enqueued_total[5m])", "legendFormat": "refund_enqueued" },
+        { "expr": "rate(lhamalog_quota_refund_succeeded_total[5m])", "legendFormat": "refund_succeeded" },
+        { "expr": "rate(lhamalog_quota_refund_retry_total[5m])", "legendFormat": "refund_retry" },
+        { "expr": "rate(lhamalog_quota_refund_suspended_total[5m])", "legendFormat": "refund_suspended" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Usage outbox",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (state) (rate(lhamalog_usage_outbox_transitions_total[5m]))",
+          "legendFormat": "transition {{state}}"
+        },
+        { "expr": "rate(lhamalog_usage_outbox_retries_total[5m])", "legendFormat": "retries" },
+        { "expr": "rate(lhamalog_usage_outbox_suspended_total[5m])", "legendFormat": "suspended" },
+        { "expr": "lhamalog_usage_outbox_pending_age_seconds", "legendFormat": "pending age" },
+        { "expr": "lhamalog_usage_outbox_attempts", "legendFormat": "attempts" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "HTTP server requests rate (mostly actuator/MVC)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 32 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (uri, method, status) (rate(http_server_requests_seconds_count[5m]))",
+          "legendFormat": "{{method}} {{uri}} {{status}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "HTTP server p95 latency",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 32 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, uri) (rate(http_server_requests_seconds_bucket[5m])))",
+          "legendFormat": "p95 {{uri}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "JVM heap used",
+      "gridPos": { "h": 7, "w": 6, "x": 0, "y": 40 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "jvm_memory_used_bytes{area=\"heap\"}",
+          "legendFormat": "{{id}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "JVM GC pause",
+      "gridPos": { "h": 7, "w": 6, "x": 6, "y": 40 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "rate(jvm_gc_pause_seconds_sum[5m])",
+          "legendFormat": "{{action}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "JVM threads",
+      "gridPos": { "h": 7, "w": 6, "x": 12, "y": 40 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "jvm_threads_live_threads", "legendFormat": "live" },
+        { "expr": "jvm_threads_peak_threads", "legendFormat": "peak" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Process CPU",
+      "gridPos": { "h": 7, "w": 6, "x": 18, "y": 40 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "process_cpu_usage", "legendFormat": "process" },
+        { "expr": "system_cpu_usage", "legendFormat": "system" }
+      ]
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["lhamalog", "collector", "llt-187"],
+  "templating": { "list": [] },
+  "time": { "from": "now-1h", "to": "now" },
+  "timezone": "browser",
+  "title": "LhamaLog Collector",
+  "uid": "lhamalog-collector",
+  "version": 1
+}

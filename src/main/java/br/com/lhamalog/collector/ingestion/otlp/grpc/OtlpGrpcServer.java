@@ -3,9 +3,10 @@ package br.com.lhamalog.collector.ingestion.otlp.grpc;
 
 import br.com.lhamalog.collector.ingestion.otlp.application.ExportLogsService;
 import br.com.lhamalog.collector.ingestion.otlp.application.ExportTracesService;
+import br.com.lhamalog.collector.ingestion.otlp.application.IngestionObservability;
+import br.com.lhamalog.collector.ingestion.otlp.application.IngestionProtocol;
 import br.com.lhamalog.collector.ingestion.otlp.domain.IngestionDecision;
 import com.google.protobuf.Any;
-import com.google.protobuf.Duration;
 import com.google.rpc.RetryInfo;
 import io.grpc.Server;
 import io.grpc.ServerInterceptors;
@@ -24,6 +25,7 @@ import io.opentelemetry.proto.collector.trace.v1.TraceServiceGrpc;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.net.InetSocketAddress;
+import java.time.Duration;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 import org.slf4j.Logger;
@@ -53,14 +55,22 @@ public class OtlpGrpcServer implements SmartLifecycle {
 
 	private final ExportTracesService traces;
 
+	private final IngestionObservability observability;
+
 	private Server server;
 
 	public OtlpGrpcServer(String host, int port, int maxMessageBytes, ExportLogsService logs, ExportTracesService traces) {
+		this(host, port, maxMessageBytes, logs, traces, IngestionObservability.NOOP);
+	}
+
+	public OtlpGrpcServer(String host, int port, int maxMessageBytes, ExportLogsService logs, ExportTracesService traces,
+			IngestionObservability observability) {
 		this.host = host;
 		this.port = port;
 		this.maxMessageBytes = maxMessageBytes;
 		this.logs = logs;
 		this.traces = traces;
+		this.observability = observability == null ? IngestionObservability.NOOP : observability;
 	}
 
 	@Override
@@ -155,7 +165,7 @@ public class OtlpGrpcServer implements SmartLifecycle {
 				.setMessage(status.getDescription() == null ? "" : status.getDescription());
 		if (retryAfterSeconds != null) {
 			rpc.addDetails(Any.pack(RetryInfo.newBuilder()
-					.setRetryDelay(Duration.newBuilder().setSeconds(retryAfterSeconds).build())
+					.setRetryDelay(com.google.protobuf.Duration.newBuilder().setSeconds(retryAfterSeconds).build())
 					.build()));
 		}
 		return StatusProto.toStatusRuntimeException(rpc.build());
@@ -175,13 +185,13 @@ public class OtlpGrpcServer implements SmartLifecycle {
 
 		@Override
 		public void export(ExportLogsServiceRequest request, StreamObserver<ExportLogsServiceResponse> observer) {
-			IngestionDecision decision = logs.export(BearerTokenInterceptor.BEARER_TOKEN.get(), () -> request);
-			reply(decision, observer, ExportLogsServiceResponse.getDefaultInstance(),
-					p -> ExportLogsServiceResponse.newBuilder()
-						.setPartialSuccess(ExportLogsPartialSuccess.newBuilder()
-							.setRejectedLogRecords(p.rejectedCount())
-							.setErrorMessage(p.errorMessage()))
-						.build());
+			recordGrpcExport("logs", () -> logs.export(BearerTokenInterceptor.BEARER_TOKEN.get(), () -> request),
+					decision -> reply(decision, observer, ExportLogsServiceResponse.getDefaultInstance(),
+							p -> ExportLogsServiceResponse.newBuilder()
+								.setPartialSuccess(ExportLogsPartialSuccess.newBuilder()
+									.setRejectedLogRecords(p.rejectedCount())
+									.setErrorMessage(p.errorMessage()))
+								.build()));
 		}
 
 	}
@@ -190,15 +200,36 @@ public class OtlpGrpcServer implements SmartLifecycle {
 
 		@Override
 		public void export(ExportTraceServiceRequest request, StreamObserver<ExportTraceServiceResponse> observer) {
-			IngestionDecision decision = traces.export(BearerTokenInterceptor.BEARER_TOKEN.get(), () -> request);
-			reply(decision, observer, ExportTraceServiceResponse.getDefaultInstance(),
-					p -> ExportTraceServiceResponse.newBuilder()
-						.setPartialSuccess(ExportTracePartialSuccess.newBuilder()
-							.setRejectedSpans(p.rejectedCount())
-							.setErrorMessage(p.errorMessage()))
-						.build());
+			recordGrpcExport("traces", () -> traces.export(BearerTokenInterceptor.BEARER_TOKEN.get(), () -> request),
+					decision -> reply(decision, observer, ExportTraceServiceResponse.getDefaultInstance(),
+							p -> ExportTraceServiceResponse.newBuilder()
+								.setPartialSuccess(ExportTracePartialSuccess.newBuilder()
+									.setRejectedSpans(p.rejectedCount())
+									.setErrorMessage(p.errorMessage()))
+								.build()));
 		}
 
+	}
+
+	private void recordGrpcExport(String signal, java.util.function.Supplier<IngestionDecision> export,
+			java.util.function.Consumer<IngestionDecision> replyWith) {
+		IngestionProtocol.set(IngestionProtocol.GRPC);
+		long started = System.nanoTime();
+		String outcome = IngestionObservability.OUTCOME_FAILED;
+		try {
+			IngestionDecision decision = export.get();
+			outcome = IngestionObservability.outcomeOf(decision);
+			replyWith.accept(decision);
+		}
+		catch (RuntimeException ex) {
+			outcome = IngestionObservability.OUTCOME_FAILED;
+			throw ex;
+		}
+		finally {
+			observability.latency(signal, IngestionProtocol.GRPC, outcome,
+					Duration.ofNanos(System.nanoTime() - started));
+			IngestionProtocol.clear();
+		}
 	}
 
 }

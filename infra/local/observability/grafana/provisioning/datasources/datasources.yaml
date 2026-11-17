@@ -1,0 +1,32 @@
+apiVersion: 1
+
+# Removes the Loki datasource left by older versions of this stack (LLT-187: logs moved to OpenObserve).
+deleteDatasources:
+  - name: Loki
+    orgId: 1
+
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+
+  # Platform logs (Collector and other modules): OpenObserve org "default", stream "lhamalog_platform".
+  # Grafana SEARCHES, so it needs a real OpenObserve login (OPENOBSERVE_USERNAME / OPENOBSERVE_PASSWORD from the
+  # environment). The ingestion credential OPENOBSERVE_AUTH_BASIC (user + ingestion passcode) only works on the
+  # ingestion endpoints and is used by Alloy alone. No credential is written in this file.
+  - name: OpenObserve
+    uid: openobserve
+    type: openobserve
+    access: proxy
+    url: ${OPENOBSERVE_URL}
+    basicAuth: true
+    basicAuthUser: ${OPENOBSERVE_USERNAME}
+    jsonData:
+      timestamp_column: _timestamp
+    secureJsonData:
+      basicAuthPassword: ${OPENOBSERVE_PASSWORD}
+    editable: false

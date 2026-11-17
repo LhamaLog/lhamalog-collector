@@ -6,6 +6,7 @@ import br.com.lhamalog.collector.ingestion.otlp.domain.IngestionDecision;
 import br.com.lhamalog.collector.ingestion.otlp.domain.SpanAssessment;
 import br.com.lhamalog.collector.ingestion.otlp.domain.TimestampWindow;
 import br.com.lhamalog.collector.ingestion.otlp.sink.TracesSink;
+import br.com.lhamalog.collector.usage.domain.CanonicalOtlpMeasurement;
 import io.opentelemetry.proto.collector.trace.v1.ExportTraceServiceRequest;
 import java.time.Clock;
 
@@ -61,7 +62,8 @@ public class ExportTracesService {
 				request -> SpanAssessment.assess(request, window, clock.instant()),
 				(tenantId, productId, request, accepted) -> sink.deliver(tenantId, productId, request, accepted),
 				"spans",
-				SpanAssessment.REJECTION_REASON, quota, sanitizer, controls);
+				SpanAssessment.REJECTION_REASON, quota, sanitizer, controls, "traces",
+				(request, accepted) -> CanonicalOtlpMeasurement.traces(request, accepted).serializedBytes());
 	}
 
 }

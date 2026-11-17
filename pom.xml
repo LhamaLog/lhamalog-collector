@@ -57,6 +57,10 @@
 			<artifactId>spring-boot-starter-actuator</artifactId>
 		</dependency>
 		<dependency>
+			<groupId>io.micrometer</groupId>
+			<artifactId>micrometer-registry-prometheus</artifactId>
+		</dependency>
+		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-cache</artifactId>
 		</dependency>
@@ -195,6 +199,18 @@
 						</goals>
 					</execution>
 				</executions>
+			</plugin>
+			<plugin>
+				<!-- LLT-187: tests never write to logs/ (the file Alloy ships to OpenObserve), even with
+				     SPRING_PROFILES_ACTIVE=local or LHAMALOG_LOG_FILE set in the shell. A system property
+				     beats application-local.properties. -->
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-surefire-plugin</artifactId>
+				<configuration>
+					<systemPropertyVariables>
+						<logging.file.name>${project.build.directory}/test-logs/lhamalog-collector-tests.log</logging.file.name>
+					</systemPropertyVariables>
+				</configuration>
 			</plugin>
 		</plugins>
 	</build>

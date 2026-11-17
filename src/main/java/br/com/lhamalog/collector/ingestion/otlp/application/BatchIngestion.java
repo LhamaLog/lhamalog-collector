@@ -18,6 +18,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
+import java.util.function.ToLongBiFunction;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -75,7 +76,17 @@ final class BatchIngestion {
 	static <R, T> IngestionDecision run(TokenValidator tokens, String bearerToken, OtlpPayload<R> payload,
 			Function<R, BatchAssessment<T>> assessment, Delivery<R, T> sink, String recordName, String rejectionReason,
 			QuotaGate<R, T> quota, BatchSanitizer<R, T> sanitizer, IngestionControls controls) {
+		return run(tokens, bearerToken, payload, assessment, sink, recordName, rejectionReason, quota, sanitizer,
+				controls, "unknown", (request, accepted) -> 0L);
+	}
+
+	static <R, T> IngestionDecision run(TokenValidator tokens, String bearerToken, OtlpPayload<R> payload,
+			Function<R, BatchAssessment<T>> assessment, Delivery<R, T> sink, String recordName, String rejectionReason,
+			QuotaGate<R, T> quota, BatchSanitizer<R, T> sanitizer, IngestionControls controls, String signal,
+			ToLongBiFunction<R, List<T>> acceptedBytes) {
 		IngestionControls limits = controls == null ? IngestionControls.permissive() : controls;
+		ToLongBiFunction<R, List<T>> bytesOf = acceptedBytes == null ? (request, accepted) -> 0L : acceptedBytes;
+		String metricSignal = signal == null || signal.isBlank() ? "unknown" : signal;
 		TokenValidationResult auth = tokens.validate(bearerToken);
 		TokenValidationResult.Valid valid;
 		switch (auth) {
@@ -220,6 +231,8 @@ final class BatchIngestion {
 				return new IngestionDecision.InvalidPayload(IngestionDecision.Reason.REJECTED_BY_DESTINATION,
 						"all " + rejected + " " + recordName + " were rejected: " + message);
 			}
+			recordPartialAcceptance(limits, metricSignal, ex.acceptedCount(), accepted.size(),
+					bytesOf.applyAsLong(request, accepted));
 			return new IngestionDecision.PartiallyAccepted(ex.acceptedCount(), rejected,
 					rejected + " " + recordName + " rejected: " + message);
 		}
@@ -234,6 +247,10 @@ final class BatchIngestion {
 		finally {
 			ReservationCorrelation.clear();
 			RetentionCorrelation.clear();
+		}
+		if (!accepted.isEmpty()) {
+			limits.observability().accepted(metricSignal, IngestionProtocol.current(), accepted.size(),
+					bytesOf.applyAsLong(request, accepted));
 		}
 		if (batch.rejectedCount() == 0) {
 			return new IngestionDecision.Accepted(batch.valid().size());
@@ -283,6 +300,20 @@ final class BatchIngestion {
 			return false;
 		}
 		return message.getSerializedSize() > maxBatchBytes;
+	}
+
+	/**
+	 * OpenObserve partial acceptance: counts the records the destination stored. The destination does not say
+	 * which records were stored, so bytes are the delivered bytes scaled by the stored share (rounded down).
+	 */
+	static void recordPartialAcceptance(IngestionControls limits, String signal, int storedCount, int deliveredCount,
+			long deliveredBytes) {
+		if (storedCount <= 0 || deliveredCount <= 0) {
+			return;
+		}
+		int stored = Math.min(storedCount, deliveredCount);
+		long bytes = Math.max(0L, deliveredBytes) * stored / deliveredCount;
+		limits.observability().accepted(signal, IngestionProtocol.current(), stored, bytes);
 	}
 
 	private static long postDebitRetryAfter(String reservationId, long fallbackSeconds) {

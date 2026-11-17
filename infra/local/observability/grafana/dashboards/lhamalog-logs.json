@@ -1,0 +1,455 @@
+{
+  "uid": "lhamalog-logs",
+  "title": "LhamaLog — Logs por módulo",
+  "description": "Logs da própria plataforma no OpenObserve (org default, stream lhamalog_platform), por módulo, nível, correlation id e texto.",
+  "tags": [
+    "lhamalog",
+    "logs",
+    "llt-187"
+  ],
+  "editable": true,
+  "graphTooltip": 1,
+  "schemaVersion": 41,
+  "version": 1,
+  "refresh": "30s",
+  "time": {
+    "from": "now-30m",
+    "to": "now"
+  },
+  "timezone": "America/Sao_Paulo",
+  "fiscalYearStartMonth": 0,
+  "liveNow": false,
+  "weekStart": "",
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "links": [
+    {
+      "title": "LhamaLog",
+      "type": "dashboards",
+      "tags": [
+        "lhamalog"
+      ],
+      "asDropdown": true,
+      "includeVars": false,
+      "keepTime": true
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "module",
+        "label": "Módulo",
+        "type": "custom",
+        "query": "lhamalog-collector,lhamalog-core,lhamalog-varredura,lhamalog-finder,lhamalog-ocorrencia",
+        "multi": false,
+        "includeAll": true,
+        "allValue": "%",
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "options": []
+      },
+      {
+        "name": "level",
+        "label": "Nível",
+        "type": "custom",
+        "query": "ERROR,WARN,INFO,DEBUG,TRACE",
+        "multi": false,
+        "includeAll": true,
+        "allValue": "%",
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "options": []
+      },
+      {
+        "name": "cid",
+        "label": "Correlation id",
+        "type": "textbox",
+        "query": "",
+        "current": {
+          "text": "",
+          "value": ""
+        },
+        "options": [
+          {
+            "selected": true,
+            "text": "",
+            "value": ""
+          }
+        ]
+      },
+      {
+        "name": "search",
+        "label": "Texto",
+        "type": "textbox",
+        "query": "",
+        "current": {
+          "text": "",
+          "value": ""
+        },
+        "options": [
+          {
+            "selected": true,
+            "text": "",
+            "value": ""
+          }
+        ]
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Volume de logs por nível",
+      "description": "OpenObserve, org default, stream lhamalog_platform (logs da própria plataforma, nunca de tenant).",
+      "datasource": {
+        "type": "openobserve",
+        "uid": "openobserve"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 16,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "openobserve",
+            "uid": "openobserve"
+          },
+          "organization": "default",
+          "stream": "lhamalog_platform",
+          "sqlMode": true,
+          "displayMode": "auto",
+          "query": "SELECT histogram(_timestamp) AS zo_sql_key, coalesce(level, '(sem nível)') AS level, count(*) AS zo_sql_num FROM \"lhamalog_platform\" WHERE service LIKE '$module' AND (level LIKE '$level' OR ('$level' = '%' AND level IS NULL)) AND ('$cid' = '' OR cid = '$cid') AND ('$search' = '' OR str_match_ignore_case(body, '$search')) GROUP BY zo_sql_key, level ORDER BY zo_sql_key"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "sem dados",
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 2,
+            "fillOpacity": 80,
+            "showPoints": "never",
+            "spanNulls": true,
+            "thresholdsStyle": {
+              "mode": "off"
+            },
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "zo_sql_num ERROR"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "zo_sql_num WARN"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "zo_sql_num INFO"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "zo_sql_num DEBUG"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "transformations": [
+        {
+          "id": "partitionByValues",
+          "options": {
+            "fields": [
+              "level"
+            ],
+            "keepFields": false
+          }
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "table",
+      "title": "Eventos (event=) no período",
+      "datasource": {
+        "type": "openobserve",
+        "uid": "openobserve"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 0,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "openobserve",
+            "uid": "openobserve"
+          },
+          "organization": "default",
+          "stream": "lhamalog_platform",
+          "sqlMode": true,
+          "displayMode": "auto",
+          "query": "SELECT event, count(*) AS total FROM \"lhamalog_platform\" WHERE service LIKE '$module' AND (level LIKE '$level' OR ('$level' = '%' AND level IS NULL)) AND ('$cid' = '' OR cid = '$cid') AND ('$search' = '' OR str_match_ignore_case(body, '$search')) AND event IS NOT NULL GROUP BY event ORDER BY total DESC"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "sem dados",
+          "custom": {
+            "align": "auto"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "sortBy": [
+          {
+            "displayName": "total",
+            "desc": true
+          }
+        ]
+      }
+    },
+    {
+      "id": 3,
+      "type": "table",
+      "title": "Logs (módulo, nível, correlation id e texto)",
+      "datasource": {
+        "type": "openobserve",
+        "uid": "openobserve"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 24,
+        "h": 18
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "openobserve",
+            "uid": "openobserve"
+          },
+          "organization": "default",
+          "stream": "lhamalog_platform",
+          "sqlMode": true,
+          "displayMode": "auto",
+          "query": "SELECT _timestamp, service, level, cid, event, body FROM \"lhamalog_platform\" WHERE service LIKE '$module' AND (level LIKE '$level' OR ('$level' = '%' AND level IS NULL)) AND ('$cid' = '' OR cid = '$cid') AND ('$search' = '' OR str_match_ignore_case(body, '$search'))"
+        }
+      ],
+      "description": "Linha completa do padrão de logs no campo body: data com fuso, [cid=...], classe.método e event=. Preencha 'Correlation id' para seguir uma requisição.",
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "sem dados",
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": true
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Time"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 190
+              },
+              {
+                "id": "unit",
+                "value": "dateTimeAsIso"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "service"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 150
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "level"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 70
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cid"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 290
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "event"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 190
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "sortBy": [
+          {
+            "displayName": "Time",
+            "desc": true
+          }
+        ],
+        "footer": {
+          "show": true,
+          "reducer": [
+            "count"
+          ],
+          "countRows": true
+        }
+      }
+    },
+    {
+      "id": 4,
+      "type": "text",
+      "title": "Como usar",
+      "gridPos": {
+        "x": 0,
+        "y": 26,
+        "w": 24,
+        "h": 5
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "**Logs da plataforma no OpenObserve** (org `default`, stream `lhamalog_platform`, fixos no Alloy). Logs de tenant ficam na organização `lhamalog` (streams `logs_<tenant>`) e nunca aparecem aqui. Filtros: **Módulo** (`service`), **Nível**, **Correlation id** (`cid`, exato; vazio = todos) e **Texto** (trecho do `body`, sem diferenciar maiúsculas). Use intervalos curtos (até algumas horas): o plugin não aceita `LIMIT` nos painéis. Sem `tenantId` (decisão do Michel)."
+      }
+    }
+  ]
+}

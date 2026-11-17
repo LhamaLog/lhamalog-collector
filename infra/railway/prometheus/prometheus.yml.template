@@ -1,0 +1,14 @@
+# Railway: scrapes the Collector management port over private networking.
+# The Collector must run with MANAGEMENT_ADDRESS=:: (the default 127.0.0.1 is not reachable from other services).
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: lhamalog-collector
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets:
+          - __COLLECTOR_METRICS_TARGET__
+        labels:
+          service: lhamalog-collector

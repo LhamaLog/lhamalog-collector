@@ -1,0 +1,8 @@
+{
+  "name": "lhamalog-collector-railway-iac",
+  "private": true,
+  "description": "Railway IaC authoring package for .railway/railway.ts (LLT-187). Not part of the Collector build.",
+  "devDependencies": {
+    "railway": "3.17.0"
+  }
+}

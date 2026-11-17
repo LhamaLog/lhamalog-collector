@@ -34,3 +34,9 @@ build/
 
 ### Ambiente local (infra/local) ###
 infra/local/.env
+
+### Collector log file (local Alloy tail / LLT-187) ###
+logs/
+
+### Railway IaC authoring package (LLT-187) ###
+.railway/node_modules/

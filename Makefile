@@ -7,13 +7,15 @@ endif
 
 # Ambiente local (ADR_151): tudo em infra/local/
 COMPOSE := docker compose -f infra/local/compose.yaml
+COMPOSE_METRICS := docker compose -p lhamalog-observability -f infra/local/compose.observability.yaml
 
-.PHONY: run run-local build test verify clean infra-up infra-down infra-ps infra-logs infra-config
+.PHONY: run run-local build test verify clean infra-up infra-down infra-ps infra-logs infra-config \
+	metrics-up metrics-down metrics-ps metrics-logs metrics-config
 
 run:
 	$(MVNW) spring-boot:run
 
-# Roda com o perfil local (MongoDB, Redis, Elasticsearch e OTel Collector de infra/local)
+# Roda com o perfil local (MongoDB, Redis, OpenObserve e OTel Collector de infra/local)
 run-local:
 	$(MVNW) spring-boot:run -Dspring-boot.run.profiles=local
 
@@ -46,3 +48,19 @@ infra-logs:
 # Valida o compose.yaml (e o .env, se existir)
 infra-config:
 	$(COMPOSE) config -q
+
+# Observabilidade do Collector (Prometheus + Grafana + Alloy; logs no OpenObserve) — projeto separado, sem secrets do compose principal
+metrics-up:
+	$(COMPOSE_METRICS) up -d
+
+metrics-down:
+	$(COMPOSE_METRICS) down
+
+metrics-ps:
+	$(COMPOSE_METRICS) ps
+
+metrics-logs:
+	$(COMPOSE_METRICS) logs -f
+
+metrics-config:
+	$(COMPOSE_METRICS) config -q

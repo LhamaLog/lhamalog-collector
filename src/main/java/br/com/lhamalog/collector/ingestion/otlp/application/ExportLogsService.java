@@ -6,6 +6,7 @@ import br.com.lhamalog.collector.ingestion.otlp.domain.IngestionDecision;
 import br.com.lhamalog.collector.ingestion.otlp.domain.LogRecordAssessment;
 import br.com.lhamalog.collector.ingestion.otlp.domain.TimestampWindow;
 import br.com.lhamalog.collector.ingestion.otlp.sink.LogsSink;
+import br.com.lhamalog.collector.usage.domain.CanonicalOtlpMeasurement;
 import io.opentelemetry.proto.collector.logs.v1.ExportLogsServiceRequest;
 import java.time.Clock;
 
@@ -65,7 +66,8 @@ public class ExportLogsService {
 				request -> LogRecordAssessment.assess(request, window, clock.instant()),
 				(tenantId, productId, request, accepted) -> sink.deliver(tenantId, productId, request, accepted),
 				"log records",
-				LogRecordAssessment.REJECTION_REASON, quota, sanitizer, controls);
+				LogRecordAssessment.REJECTION_REASON, quota, sanitizer, controls, "logs",
+				(request, accepted) -> CanonicalOtlpMeasurement.logs(request, accepted).serializedBytes());
 	}
 
 }

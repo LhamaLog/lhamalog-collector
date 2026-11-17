@@ -85,6 +85,20 @@ public record OtlpReceiverProperties(
 			String username,
 			String password) {
 
+		/**
+		 * OpenObserve organization reserved for the platform's own logs (Collector and other modules, LLT-187):
+		 * Alloy writes them to the stream {@code lhamalog_platform} of this organization. Tenant data can never be
+		 * written there, so a tenant stream name can never collide with the platform stream.
+		 */
+		public static final String PLATFORM_ORGANIZATION = "default";
+
+		public OpenObserve {
+			if (organization != null && PLATFORM_ORGANIZATION.equalsIgnoreCase(organization.trim())) {
+				throw new IllegalArgumentException("lhamalog.otlp.openobserve.organization must not be '"
+						+ PLATFORM_ORGANIZATION + "': that organization is reserved for platform logs, not tenant data");
+			}
+		}
+
 		@Override
 		public String toString() {
 			return "OpenObserve[url=" + url + ", organization=" + organization + ", logsStream=" + logsStream
