@@ -22,6 +22,8 @@ export default defineRailway((ctx) => {
   const prometheusData = volume("prometheus-data", { sizeMB: 1024 });
   const openobserveData = volume("openobserve-data", { sizeMB: 2048 });
   const grafanaData = volume("grafana-data", { sizeMB: 512 });
+  // Alloy state (--storage.path): WAL/positions survive redeploys, so nothing is re-sent.
+  const alloyData = volume("alloy-data", { sizeMB: 256 });
 
   // Private only: no domains. Scrapes the Collector management port over private networking.
   const prometheus = service("prometheus", {
@@ -69,8 +71,10 @@ export default defineRailway((ctx) => {
       watchPatterns: ["infra/railway/alloy/**"],
     },
     deploy: { healthcheckPath: "/-/ready", healthcheckTimeout: 120, ...restart },
+    volumeMounts: { "/var/lib/alloy/data": alloyData },
     env: {
       PORT: "12345",
+      RAILWAY_RUN_UID: "0",
       OPENOBSERVE_URL,
       OPENOBSERVE_PLATFORM_ORG: "default",
       OPENOBSERVE_PLATFORM_STREAM: "lhamalog_platform",
@@ -108,7 +112,7 @@ export default defineRailway((ctx) => {
 
   return project("lhamalog", {
     resources: [
-      group("Observability", [prometheus, openobserve, alloy, grafana, prometheusData, openobserveData, grafanaData]),
+      group("Observability", [prometheus, openobserve, alloy, grafana, prometheusData, openobserveData, grafanaData, alloyData]),
     ],
   });
 });

@@ -49,6 +49,9 @@ $env:LHAMALOG_LOG_FILE="logs/lhamalog-collector.log"
 
 O Alloy faz tail de `../../logs` (bind mount). Formato = princípio VI (mesmo pattern de console, sem cores).
 
+- O estado do Alloy (posição de leitura do arquivo) fica no volume `alloy-data` (`/var/lib/alloy/data`, `--storage.path`): recriar o container continua de onde parou e não reenvia o arquivo inteiro. `docker compose ... down -v` apaga esse estado (aí o arquivo é relido do início).
+- Os testes (`mvnw verify`) **nunca** escrevem em `logs/`: o `maven-surefire-plugin` fixa `logging.file.name=target/test-logs/lhamalog-collector-tests.log` (propriedade de sistema, vale mesmo com `SPRING_PROFILES_ACTIVE=local` ou `LHAMALOG_LOG_FILE` no shell). Assim nenhuma linha de teste chega ao stream `lhamalog_platform`.
+
 **Rota dos logs (local):** arquivo → Alloy (`loki.source.file`, só o leitor de arquivo, sem Loki) → OTLP/HTTP (`otelcol.exporter.otlphttp "openobserve"`) → `OPENOBSERVE_URL/api/default` com os headers `Authorization: Basic <OPENOBSERVE_AUTH_BASIC sem prefixo e aparado>` e `stream-name: lhamalog_platform`. Cada registro leva `service` (módulo), `level`, `cid` (correlation id), `logger`, `event` e a linha completa em `body`. Sem dependência runtime nova no Collector.
 
 ### Logs da plataforma nunca caem em stream de tenant
@@ -123,7 +126,7 @@ Arquivos: `.railway/railway.ts` (Infrastructure as Code, partial `observability-
 |---|---|---|---|---|---|
 | `prometheus` | `prom/prometheus:v3.5.0` | 9090 | `/-/ready` (120 s) | `prometheus-data` 1 GB em `/prometheus` (retenção 7d / 900 MB) | **não** |
 | `openobserve` | `public.ecr.aws/zinclabs/openobserve:v1.1.2` | 5080 | `/healthz` (120 s) | `openobserve-data` 2 GB em `/data` | **não** (UI atrás do login do OpenObserve, só pela rede privada) |
-| `alloy` | `grafana/alloy:v1.10.2` | 12345 (UI) / 4318 (OTLP HTTP) | `/-/ready` (120 s) | — | **não** |
+| `alloy` | `grafana/alloy:v1.10.2` | 12345 (UI) / 4318 (OTLP HTTP) | `/-/ready` (120 s) | `alloy-data` 256 MB em `/var/lib/alloy/data` (estado/WAL do Alloy) | **não** |
 | `grafana` | `grafana/grafana:12.2.0` | 3000 | `/api/health` (120 s) | `grafana-data` 512 MB em `/var/lib/grafana` | só este, gerado no dashboard |
 
 Todos com restart `ON_FAILURE` (até 10 tentativas), build por `DOCKERFILE` e `watchPatterns` só da própria pasta. Branch `Development`; no ambiente `production`, `main`. `RAILWAY_RUN_UID=0` nos serviços com volume (o volume da Railway monta como root).
@@ -164,13 +167,13 @@ Todos com restart `ON_FAILURE` (até 10 tentativas), build por `DOCKERFILE` e `w
 1. Instalar a CLI da Railway (5.42.1 ou mais nova) e `npm install` em `.railway/` (pacote `railway` 3.17.0).
 2. `railway link` no projeto/ambiente certo.
 3. Criar as variáveis seladas: `GF_SECURITY_ADMIN_PASSWORD`, `OPENOBSERVE_USERNAME` e `OPENOBSERVE_PASSWORD` no `grafana`; `OPENOBSERVE_AUTH_BASIC` no `alloy`; `ZO_ROOT_USER_EMAIL` e `ZO_ROOT_USER_PASSWORD` no `openobserve` (dashboard).
-4. `railway config plan` e revisar o plano (4 serviços, 3 volumes, nada fora do grupo `Observability`).
+4. `railway config plan` e revisar o plano (4 serviços, 4 volumes, nada fora do grupo `Observability`).
 5. `railway config apply` (sem `--yes`).
 6. Gerar domínio público **só** para o `grafana` (porta 3000) e configurar `MANAGEMENT_ADDRESS=::` no serviço do Collector.
 
 ### Custo
 
-Nada foi implantado, então não há custo agora. Na Railway a cobrança é por uso (CPU, memória, volume e tráfego de saída; tráfego na rede privada não conta como egress). São quatro serviços sempre ligados e 3,5 GB de volume: estimar no painel de uso da Railway antes de aplicar.
+Nada foi implantado, então não há custo agora. Na Railway a cobrança é por uso (CPU, memória, volume e tráfego de saída; tráfego na rede privada não conta como egress). São quatro serviços sempre ligados e 3,75 GB de volume: estimar no painel de uso da Railway antes de aplicar.
 
 ### Validação local feita (16/11/2026)
 

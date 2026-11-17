@@ -29,6 +29,9 @@ services:
     volumes:
       - ./observability/alloy/config.alloy:/etc/alloy/config.alloy:ro
       - ../../logs:/var/log/lhamalog:ro
+      # Alloy state (positions of the tailed file): a recreated container resumes where it stopped
+      # instead of re-sending the whole log file.
+      - alloy-data:/var/lib/alloy/data
     command:
       - "run"
       - "/etc/alloy/config.alloy"
@@ -58,3 +61,6 @@ services:
       - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
     depends_on:
       - prometheus
+
+volumes:
+  alloy-data:
